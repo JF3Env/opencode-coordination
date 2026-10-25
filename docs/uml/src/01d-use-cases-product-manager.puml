@@ -1,0 +1,73 @@
+@startuml 01d-use-cases-product-manager
+!include style.iuml
+title Use cases of the product manager
+left to right direction
+
+actor "Product manager\n(agent: product-manager)" as PM
+actor "Coordinator" as Coord
+actor "Owner" as Owner
+
+rectangle "opencode-coordination" {
+  package "Priorities and decisions" {
+    usecase "Propose a work item\n(outcome, measure, prediction, kind)" as UC_propose
+    usecase "Record a decision\n(what, why, conditions, carried by)" as UC_decide
+    usecase "Prioritize a front\n(now / next / later)" as UC_prioritize
+    usecase "Park a front" as UC_park
+    usecase "Flag a stall" as UC_stall
+  }
+  package "Measures" {
+    usecase "Record a measurement\n(record on main required)" as UC_measure
+    usecase "Validate an item against\nan independent reference" as UC_validate
+  }
+  package "Reports" {
+    usecase "Write an executive summary line\n(no codes allowed)" as UC_summary
+    usecase "Generate the owner bundle" as UC_bundle
+    usecase "Render project pages\n(ACTIVE, board, roadmap, status)" as UC_render
+    usecase "Export snapshot / evidence" as UC_export
+    usecase "Read the board" as UC_board
+  }
+  package "Communication" {
+    usecase "Ask / answer / note" as UC_msg
+    usecase "Look up a record, query history" as UC_hist
+    usecase "Report an incident" as UC_incident
+    usecase "Relay an owner order" as UC_owner
+  }
+  usecase "Append an event" as UC_event
+}
+
+PM --> UC_propose
+PM --> UC_decide
+PM --> UC_prioritize
+PM --> UC_park
+PM --> UC_stall
+PM --> UC_measure
+PM --> UC_validate
+PM --> UC_summary
+PM --> UC_bundle
+PM --> UC_render
+PM --> UC_export
+PM --> UC_board
+PM --> UC_msg
+PM --> UC_hist
+PM --> UC_incident
+PM --> UC_owner
+
+UC_propose ..> Coord : delivered, deadline 1 block
+UC_decide ..> Coord : delivered, deadline 1 block
+UC_stall ..> Coord : delivered
+UC_prioritize ..> Coord : note
+UC_bundle ..> Owner : the PM hands it over
+UC_render ..> Owner : reads the pages
+UC_bundle ..> UC_board : <<include>>
+UC_render ..> UC_board : <<include>>
+UC_propose ..> UC_event : <<include>>
+UC_decide ..> UC_event : <<include>>
+UC_measure ..> UC_event : <<include>>
+UC_validate ..> UC_event : <<include>>
+
+note right of UC_propose
+  The product manager never names the
+  engineer, clears a session or merges:
+  those tools are not published to its role.
+end note
+@enduml

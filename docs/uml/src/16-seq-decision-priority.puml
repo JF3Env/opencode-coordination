@@ -1,0 +1,47 @@
+@startuml 16-seq-decision-priority
+!include style.iuml
+title Product manager decides and prioritizes; the coordinator carries out
+
+actor "Product manager" as PM
+participant "coordination_decide" as TDecide
+participant "coordination_prioritize" as TPrio
+participant "coordination_accept\n(answer to a decision)" as TDone
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "Coordinator" as Coord
+participant "Board\n(projection)" as Board
+
+PM -> TDecide : text, why, conditions, carriedBy coordinator
+TDecide -> TDecide : guard: role = product-manager
+TDecide -> Ledger : append decision.recorded {D1761…}
+TDecide -> Deliver : enqueue(DECISION → coordinator,\nneedsAnswerBy = now + 1 block)
+Deliver -> Coord : steer: DECISION D1761… (record id)
+TDecide --> PM : "Recorded D1761…"
+
+Coord -> TDone : decision D1761…, answer done | cannot | accepted | in_progress, reason, items
+TDone -> Ledger : append decision.answered
+TDone -> Ledger : append message.answered
+TDone -> Deliver : enqueue(DONE D1761… → product manager)
+Deliver -> PM : steer: DONE D1761… (record id)
+note right of Ledger
+  accepted / in_progress keep the deadline open
+  until a final done / cannot arrives.
+end note
+
+== priority ==
+PM -> TPrio : front G6, [W…a, W…b, W…c]
+TPrio -> Ledger : append front.prioritized {order}
+TPrio -> Board : recompute now / next / later for G6
+TPrio -> Deliver : enqueue(note → coordinator: "G6 order changed")
+TPrio --> PM : board excerpt for G6
+
+== an item that moves no measure ==
+PM -> TPrio : item without "moves" into "now"
+TPrio --> PM : warn "upkeep in now: it must say what it enables"\n(recorded; the PM decides)
+
+== the generated STATE (block boundary) ==
+Board -> Ledger : merged since last digest, in flight,\nblocked, free engineers, pending owner decisions
+Board -> Deliver : enqueue(STATE → product manager, kind rendered)
+Deliver -> PM : steer: STATE 14:00 (record id)
+Board -> Deliver : enqueue(copy → coordinator)
+@enduml

@@ -1,0 +1,33 @@
+{
+  "roles": {
+    "coordinator": ["coordinator"],
+    "product-manager": ["product-manager", "pm"],
+    "engineer": ["engineer"]
+  },
+  "blockMinutes": 60,
+  "fronts": [
+    { "id": "G1", "title": "A simulated product as close as possible to a real one" },
+    { "id": "G2", "title": "The material twin works" },
+    { "id": "G3", "title": "The README always presents the improvements" },
+    { "id": "G4", "title": "A captivating presentation that demonstrates every capability" },
+    { "id": "G5", "title": "New physics that makes the simulation faster, leaner and more accurate" },
+    { "id": "G6", "title": "The documentation stays current and every reader can use it" }
+  ],
+  "github": { "repo": "owner/project", "syncMinutes": 3, "agentLine": true },
+  "prompt": {
+    "rules": [
+      "Everything published (commits, pull requests, pages) is in English.",
+      "Never claim equivalence with a real product without independent evidence."
+    ]
+  },
+  "render": {
+    "active": "docs/coordination/ACTIVE.md",
+    "board": "docs/coordination/BOARD.md",
+    "roadmap": "ROADMAP.md",
+    "status": "STATUS.md",
+    "snapshot": "docs/coordination/snapshot.json",
+    "auto": false
+  },
+  "limits": { "openItemsPerEngineer": 1, "upkeepShare": 0.34 },
+  "freezeExempt": ["coordinator", "product-manager"]
+}

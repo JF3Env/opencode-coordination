@@ -1,0 +1,57 @@
+@startuml 06-seq-session-start
+!include style.iuml
+title Session start: presence, name, title, role prompt
+
+participant "OpenCode\n(session events, hooks)" as OC
+participant "Plugin\n(index)" as Plugin
+participant "ToolRegistry" as Tools
+participant "PromptBuilder" as Prompt
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+
+== plugin setup (once per server process) ==
+OC -> Plugin : setup(ctx)
+Plugin -> Ledger : open(scope db), migrate, rebuild if empty
+Plugin -> Tools : publish(ctx.tool, profile.roles)
+note right of Tools
+  each tool carries the roles that may see it;
+  OpenCode shows an engineer no coordinator tool
+end note
+Plugin -> Plugin : bind bridge (see 10), start clock (see 13), start GitHub sync (see 14)
+
+== every session, every turn ==
+OC -> Plugin : hook "context" (sessionID, agent, model)
+Plugin -> Ledger : agent(sessionID)
+alt first time seen
+  Plugin -> Ledger : append agent.seen {role from agent id,\nscope = git common dir of directory}
+  Plugin -> Ledger : append agent.named {name from pool}
+  note right
+    role sessions only; subagents get
+    "<parent>/<n>" and consume no name
+  end note
+  Plugin -> OC : session.update(title "Eng. Ana <model>")
+  Plugin -> Ledger : append agent.titled
+else known
+  Plugin -> Ledger : append agent.seen (status busy)
+end
+Plugin -> Prompt : forSession(sessionID)
+Prompt -> Ledger : current item, pending questions,\nactive holds, role tools
+Prompt --> Plugin : ~25 lines
+Plugin -> OC : event.system.push(prompt)
+Plugin -> Deliver : pull(sessionID)
+Deliver -> Ledger : pending(sessionID)
+loop each pending message
+  Deliver -> OC : session.synthetic(steer, rendered message + record id)
+  Deliver -> Ledger : append message.delivered
+end
+
+== title protection ==
+OC -> Plugin : hook "title" (auto title generator)
+Plugin -> Ledger : agent(sessionID)
+Plugin --> OC : result = role title (unchanged)
+
+== status events ==
+OC -> Plugin : session.status busy / idle / session.created
+Plugin -> Ledger : append agent.seen (status)
+Plugin -> Deliver : pull(sessionID)
+@enduml

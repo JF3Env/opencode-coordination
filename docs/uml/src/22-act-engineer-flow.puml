@@ -1,0 +1,69 @@
+@startuml 22-act-engineer-flow
+!include style.iuml
+title One assignment, from the engineer's seat (swimlanes)
+
+|Engineer|
+start
+:session starts; prompt shows name,\nrole, scope, no current item;
+:coordination_available;
+|Plugin|
+:append agent.available; notify coordinator;
+|Coordinator|
+:coordination_assign (activity 12);
+|Plugin|
+:append item.assigned; deliver ASSIGN;\nprompt now shows the item;
+|Engineer|
+:create worktree and branch from main\n(outside the plugin);
+:coordination_claim (branch, worktree, files);
+|Plugin|
+:collision check; append item.claimed;\nACTIVE row exists from here;
+|Engineer|
+:push; open draft PR with Moves/Predicted/Result\n(and "Agent: <name>" when OpenCode);
+|Plugin|
+:GitHub sync links PR to item;\nflags a missing outcome line;
+|Engineer|
+repeat
+  :work under the project's rules;
+  :coordination_progress (one line)\nor push commits;
+  if (blocked?) then (yes)
+    :coordination_blocked (on what, unblock event);
+    |Plugin|
+    :item blocked; coordinator sees it in queue;
+    |Engineer|
+  endif
+  if (defect outside scope?) then (yes)
+    :coordination_defect_found; write the DEF file;
+  endif
+repeat while (checks, self-review and merge of main done?) is (no)
+:gh pr ready N;
+:coordination_ready (checks, shared files, numbers, result, next);
+|Plugin|
+if (PR ready, contains main, no hold?) then (no)
+  :refuse with the condition;
+  |Engineer|
+  :fix and call ready again;
+  detach
+else (yes)
+  :append item.ready; deliver READY to coordinator;
+endif
+|Coordinator|
+:review; coordination_verdict;
+if (approved?) then (no)
+  |Plugin|
+  :deliver CHANGES REQUESTED; item back to in_progress on sync;
+  |Engineer|
+  :answer each finding with a commit and a comment;\ncoordination_ready again;
+  detach
+else (yes)
+  :gh pr merge;
+endif
+|Plugin|
+:sync sees mergedAt; item.merged;\nbroadcast "main moved";
+|Engineer|
+:coordination_result (before, after, record, verdict);
+|Plugin|
+:measure.recorded; item.measured; RESULT to PM;
+|Engineer|
+:coordination_available;
+stop
+@enduml

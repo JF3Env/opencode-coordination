@@ -1,0 +1,301 @@
+@startuml 03-classes
+!include style.iuml
+title Domain model and services
+skinparam linetype ortho
+hide empty methods
+
+package "domain" {
+  enum Role {
+    coordinator
+    product_manager
+    engineer
+    other
+  }
+  enum ItemState {
+    proposed
+    accepted
+    ready
+    assigned
+    in_progress
+    in_review
+    merged
+    measured
+    validated
+    blocked
+    deferred
+    rejected
+    cancelled
+  }
+  enum ItemKind {
+    feature
+    fix
+    measure
+    review
+    upkeep
+    process
+    breakdown
+  }
+  enum AgentStatus {
+    busy
+    idle
+    gone
+  }
+  enum MessageKind {
+    ask
+    answer
+    note
+    owner_order
+    safety
+    incident
+    broadcast
+    rendered
+  }
+
+  class Event {
+    +id : string  <<ms since epoch + 2 digits>>
+    +at : ISO8601
+    +scope : string  <<git common dir>>
+    +actorSession : string
+    +actorName : string
+    +actorRole : Role
+    +type : string  <<agent.* message.* item.* decision.* measure.* hold.* incident.* owner.* pr.* clock.* view.*>>
+    +subject : string
+    +payload : json
+    +refs : string[]
+  }
+
+  class Agent {
+    +sessionID : string
+    +name : string
+    +formerName : string?
+    +role : Role
+    +model : string?
+    +directory : string
+    +scope : string
+    +status : AgentStatus
+    +seenAt : ISO8601
+    +currentItem : string?
+  }
+
+  class Item {
+    +id : string
+    +title : string
+    +kind : ItemKind
+    +front : string?
+    +outcome : Outcome
+    +predicted : string?
+    +decidedBy : string?
+    +state : ItemState
+    +assignee : string?
+    +engineerKind : "opencode" | "claude"
+    +engineerKindWhy : string?
+    +branch : string?
+    +worktree : string?
+    +pr : number?
+    +headSha : string?
+    +containsMain : boolean?
+    +scopeFiles : string[]
+    +identifiers : string[]
+    +constraints : string?
+    +doneWhen : string?
+    +parent : string?
+    +estimateBlocks : [number, number]?
+    +priority : number?
+    +result : Result?
+    +stages : Map<Stage, {at, commit}>
+    +blockedOn : string?
+    +unblockOn : string?
+    +transition(to, actor) : Event
+  }
+
+  class Outcome {
+    +moves : string?  <<"G1.3a z0">>
+    +upkeep : string?
+    +enables : string?
+  }
+
+  class Result {
+    +before : string
+    +after : string
+    +record : string  <<committed path>>
+    +verdict : met | missed | inconclusive
+  }
+
+  class Decision {
+    +id : string  <<D + ms>>
+    +text : string
+    +why : string
+    +conditions : string
+    +carriedBy : Role
+    +answer : done | cannot | accepted | in_progress | null
+    +answerReason : string?
+    +items : string[]
+  }
+
+  class Measure {
+    +name : string
+    +front : string
+    +value : string
+    +unit : string
+    +record : string
+    +commit : string
+    +at : ISO8601
+    +measuredBy : string
+    +sensitiveTo : string
+    +blindTo : string
+  }
+
+  class Message {
+    +id : string
+    +shortId : string  <<8 chars>>
+    +kind : MessageKind
+    +from : Party
+    +to : Party
+    +item : string?
+    +text : string
+    +needsAnswerBy : ISO8601?
+    +answeredBy : string?
+    +reminded : number
+    +escalated : boolean
+    +deliveredToAgent : boolean
+    +transport : opencode | claude | cli | imported
+  }
+
+  class Party {
+    +kind : opencode | claude | cli
+    +id : string
+    +name : string
+    +address : string?
+  }
+
+  class Hold {
+    +id : string
+    +kind : hold | freeze
+    +paths : string[]
+    +prs : number[]
+    +reason : string
+    +liftOn : string
+    +liftedAt : ISO8601?
+    +covers(item) : boolean
+  }
+
+  class Incident {
+    +id : string
+    +kind : comm_failure | safety | forged_instruction | process
+    +text : string
+    +reportedBy : string
+    +resolution : string?
+  }
+
+  class OwnerOrder {
+    +id : string
+    +words : string  <<verbatim>>
+    +receivedBy : string
+    +changes : string
+  }
+
+  Item "1" *-- "1" Outcome
+  Item "0..1" *-- "1" Result
+  Item "0..*" --> "0..1" Item : parent
+  Item "0..*" --> "0..1" Agent : assignee
+  Decision "0..*" --> "0..*" Item
+  Message "1" --> "2" Party
+  Message "0..*" --> "0..1" Item
+  Measure "0..*" --> "0..1" Item : moved by
+  Hold "0..*" --> "0..*" Item : covers
+  Event "1..*" --> "1" Agent : actor
+}
+
+package "services" {
+  class Ledger {
+    -db : SqliteAdapter
+    +append(event) : Event
+    +appendMany(events) : Event[]
+    +project(event) : void
+    +item(id) : Item
+    +agent(sessionID) : Agent
+    +message(idOrShort) : Message | ambiguous | missing
+    +query(filter) : Event[]
+    +pending(sessionID) : Message[]
+    +rebuild() : void
+    +archiveIfLarge() : void
+  }
+  class SqliteAdapter {
+    +open(path) : SqliteAdapter
+    +run(sql, params)
+    +all(sql, params)
+    +transaction(fn)
+    {static} +detect() : "bun:sqlite" | "node:sqlite"
+  }
+  class ToolRegistry {
+    -config : Profile
+    +publish(editor) : void
+    +forRole(role) : ToolSpec[]
+    -guard(spec, context) : void
+  }
+  class Deliverer {
+    -active : Set<sessionID>
+    +pull(sessionID) : void
+    +enqueue(message) : void
+    +broadcast(scope, message) : void
+    -steer(sessionID, text) : void
+    -burstGate(from, to, text) : ok | duplicate | burst
+  }
+  class Clock {
+    -blockMinutes : number
+    +tick() : void
+    -remind() : void
+    -escalate() : void
+    -detectStalls() : void
+    -detectIdle() : void
+    -detectGone() : void
+    -digest() : void
+  }
+  class GitHubSync {
+    -repo : string
+    +sync() : PrEvent[]
+    -map(pr, item) : Event[]
+  }
+  class Bridge {
+    -socketPath : string
+    +bind(onMessage) : void
+    +send(peer, text, from) : accepted | uncertain
+    +listClaudePeers() : ClaudePeer[]
+    -handleFrame(line) : void
+  }
+  class PromptBuilder {
+    +forSession(sessionID) : string
+  }
+  class Renderer {
+    +render(profile) : Page[]
+    +check(profile) : Diff[]
+    +snapshot() : json
+  }
+  class Importer {
+    +fromAgentMail(root) : Event[]
+  }
+  class Cli {
+    +main(argv) : exit code
+  }
+
+  Ledger --> SqliteAdapter
+  ToolRegistry --> Ledger
+  ToolRegistry --> Deliverer
+  ToolRegistry --> Bridge
+  ToolRegistry --> GitHubSync
+  Deliverer --> Ledger
+  Clock --> Ledger
+  Clock --> Deliverer
+  Clock --> Renderer
+  Clock --> GitHubSync
+  GitHubSync --> Ledger
+  Bridge --> Ledger
+  Bridge --> Deliverer
+  PromptBuilder --> Ledger
+  Renderer --> Ledger
+  Importer --> Ledger
+  Cli --> Ledger
+  Cli --> Renderer
+  Cli --> Bridge
+}
+@enduml

@@ -1,0 +1,42 @@
+@startuml 14-act-github-sync
+!include style.iuml
+title GitHubSync.sync(): mapping pull-request state onto items
+
+start
+:gh pr list ~--state all ~--limit 100 ~--json\nnumber,isDraft,headRefName,headRefOid,mergedAt,\nmergeCommit,closedAt,updatedAt,body,files,comments;
+if (gh failed or rate limited?) then (yes)
+  :append pr.sync_failed; keep last state;
+  stop
+endif
+:for each pull request;
+:item = item with pr = number,\nelse item with branch = headRefName;
+if (item found?) then (no)
+  :append pr.unlinked (coordinator sees it in queue);
+else (yes)
+  if (item.pr is null?) then (yes)
+    :append item.pr_linked {number};
+  endif
+  if (headRefOid changed?) then (yes)
+    :containsMain = origin/main is ancestor of head;
+    :append pr.synced {head, containsMain, updatedAt};
+  endif
+  if (body lacks "Moves:"/"Upkeep:" line, or lacks\n"Agent: <name>" when profile.github.agentLine\nand the assignee is an OpenCode session?) then (yes)
+    :append pr.description_incomplete; note to the author (once);
+  endif
+  if (mergedAt set and item.state != merged?) then (yes)
+    :append pr.merged, item.merged {commit = mergeCommit};
+    :stage implemented = {mergedAt, mergeCommit};
+    :broadcast "main moved" to other open items' authors\nand the standing document owners;
+  elseif (closedAt set and not merged?) then (yes)
+    :append pr.closed; item back to ready with a note;
+  elseif (isDraft = false and item.state = in_progress?) then (yes)
+    :append pr.ready_seen (item waits for coordination_ready);
+  elseif (isDraft = true and item.state = in_review?) then (yes)
+    :append item.returned (verdict changes applied);
+  endif
+  if (a comment starting with "STEWARD:" is newer\nthan the last item.verdict?) then (yes)
+    :append item.verdict {from comment};
+  endif
+endif
+stop
+@enduml

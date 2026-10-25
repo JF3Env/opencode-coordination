@@ -1,0 +1,79 @@
+@startuml 01c-use-cases-coordinator
+!include style.iuml
+title Use cases of the coordinator (and merge steward)
+left to right direction
+
+actor "Coordinator\n(agent: coordinator)" as Coord
+actor "Engineer" as Eng
+actor "Product manager" as PM
+actor "GitHub" as GH <<external system>>
+
+rectangle "opencode-coordination" {
+  package "Proposals and breakdown" {
+    usecase "Accept, defer or reject\na proposal" as UC_accept
+    usecase "Break an initiative down\ninto one-PR items" as UC_breakdown
+    usecase "Answer a decision\n(done / cannot / accepted / in progress)" as UC_decide_answer
+  }
+  package "Assignments" {
+    usecase "Assign an item" as UC_assign
+    usecase "Assign with a fresh session" as UC_fresh
+    usecase "Reassign a stalled or\norphaned item" as UC_reassign
+    usecase "Check file-scope collision" as UC_collision
+    usecase "Check one open PR per engineer,\nholds, upkeep share" as UC_checks
+  }
+  package "Review and merge" {
+    usecase "Read the review queue\n(ready order, conflicts, idle drafts, free engineers)" as UC_queue
+    usecase "Give a review verdict\n(text for the STEWARD comment)" as UC_verdict
+    usecase "Record a merge (fallback)" as UC_merged
+    usecase "Hold, freeze, lift" as UC_hold
+  }
+  package "Reporting" {
+    usecase "Generate the state digest" as UC_state
+    usecase "Read the board" as UC_board
+  }
+  package "Communication" {
+    usecase "Ask / answer / note" as UC_msg
+    usecase "Look up a record, query history" as UC_hist
+    usecase "Relay an owner order" as UC_owner
+  }
+  usecase "Append an event" as UC_event
+}
+
+Coord --> UC_accept
+Coord --> UC_breakdown
+Coord --> UC_decide_answer
+Coord --> UC_assign
+Coord --> UC_reassign
+Coord --> UC_queue
+Coord --> UC_verdict
+Coord --> UC_merged
+Coord --> UC_hold
+Coord --> UC_state
+Coord --> UC_board
+Coord --> UC_msg
+Coord --> UC_hist
+Coord --> UC_owner
+
+UC_assign ..> UC_fresh : <<extend>>\nfresh = true
+UC_assign ..> UC_collision : <<include>>
+UC_assign ..> UC_checks : <<include>>
+UC_reassign ..> UC_checks : <<include>>
+UC_accept ..> PM : answers
+UC_decide_answer ..> PM : answers
+UC_assign ..> Eng : delivers ASSIGN
+UC_reassign ..> Eng : delivers ASSIGN,\nnotifies the previous assignee
+UC_hold ..> Eng : broadcast to the scope
+UC_verdict ..> Eng : delivers the verdict
+UC_verdict ..> GH : coordinator posts the\ncomment and merges with gh
+UC_state ..> PM : delivered each block\n(also by the clock)
+UC_accept ..> UC_event : <<include>>
+UC_assign ..> UC_event : <<include>>
+UC_verdict ..> UC_event : <<include>>
+UC_hold ..> UC_event : <<include>>
+
+note right of UC_queue
+  The coordinator writes no roster, no
+  ACTIVE row and no STATE text: all three
+  are projections of the ledger.
+end note
+@enduml

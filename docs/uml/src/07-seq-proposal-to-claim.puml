@@ -1,0 +1,58 @@
+@startuml 07-seq-proposal-to-claim
+!include style.iuml
+title From proposal to claim: product manager → coordinator → engineer
+
+actor "Product manager" as PM
+participant "coordination_propose" as TPropose
+participant "coordination_accept" as TAccept
+participant "coordination_assign" as TAssign
+participant "coordination_claim" as TClaim
+participant "Domain\n(Item)" as Domain
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "Coordinator" as Coord
+actor "Engineer" as Eng
+
+PM -> TPropose : title, front, outcome, measure,\nbaseline, predicted, kind, why, not covered
+TPropose -> TPropose : guard: role = product-manager
+TPropose -> Domain : new Item(state proposed)
+Domain -> Ledger : append item.proposed {id = ms}
+TPropose -> Deliver : enqueue(rendered PROPOSAL → coordinator,\nneedsAnswerBy = now + 1 block)
+Deliver -> Ledger : append message.sent
+TPropose --> PM : "Proposed W1761… ; coordinator notified"
+Deliver -> Coord : steer: PROPOSAL W1761… (record id)
+
+Coord -> TAccept : item, conditions
+TAccept -> TAccept : guard: role = coordinator
+TAccept -> Domain : transition(proposed → accepted)
+Domain -> Ledger : append item.accepted
+TAccept -> Ledger : append message.answered (the proposal)
+TAccept -> Deliver : enqueue(ANSWER → product manager)
+Deliver -> PM : steer: ANSWER W1761… accepted
+TAccept --> Coord : "Accepted; now ready to assign when scope is complete"
+
+Coord -> TAssign : item, engineer Ana, fresh = false
+TAssign -> TAssign : guard: role = coordinator
+TAssign -> Domain : checks (activity 12):\ntarget role = engineer, same scope,\nno open PR of Ana, file collision,\nhold, upkeep share
+alt a check fails
+  TAssign --> Coord : refusal with the reason\n(event item.assign_refused)
+else all pass
+  TAssign -> Domain : transition(ready → assigned, assignee Ana)
+  Domain -> Ledger : append item.assigned
+  TAssign -> Deliver : enqueue(rendered ASSIGN → Ana,\nneedsAnswerBy = now + 1 block)
+  Deliver -> Eng : steer: ASSIGN W1761… (record id)\nnext turn's prompt shows it as current item
+  TAssign --> Coord : "Assigned to Ana"
+end
+
+Eng -> TClaim : item, branch, worktree, files
+TClaim -> TClaim : guard: role = engineer, assignee = caller
+TClaim -> Domain : collision(files) against other active items
+TClaim -> Domain : transition(assigned → in_progress)
+Domain -> Ledger : append item.claimed {branch, worktree, files}
+TClaim -> Ledger : append message.answered (the ASSIGN is acknowledged)
+TClaim --> Eng : "Claimed; collisions: none"
+note over Ledger
+  ACTIVE.md row and the coordinator's roster
+  are projections of item.claimed; nobody types them.
+end note
+@enduml

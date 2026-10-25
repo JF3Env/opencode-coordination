@@ -1,0 +1,41 @@
+@startuml 11-seq-fresh-assign
+!include style.iuml
+title Assign with fresh = true: a totally new activity replaces the engineer session
+
+actor "Coordinator" as Coord
+participant "coordination_assign" as TAssign
+participant "Domain" as Domain
+database "Ledger" as Ledger
+participant "OpenCode\nctx.session" as OC
+participant "Deliverer" as Deliver
+actor "Engineer (Ana)\nold session" as Old
+actor "Engineer (Ana)\nnew session" as New
+
+Coord -> TAssign : item, Ana, fresh = true
+TAssign -> TAssign : guard: role = coordinator;\ntarget is an OpenCode engineer
+TAssign -> Domain : checks of activity 12
+TAssign -> OC : session.get(old) → agent, model, directory, permissions
+TAssign -> OC : session.interrupt(old, resume = false)
+TAssign -> OC : session.create(title "Eng. Ana <model>", agent,\nmodel, location, permissions)
+OC --> TAssign : new session id
+TAssign -> Ledger : append agent.renamed {name Ana: old → new}
+alt delivery into the new session fails
+  TAssign -> Ledger : append agent.renamed {back}
+  TAssign -> OC : session.remove(new)
+  TAssign --> Coord : refusal "replacement not delivered"
+else
+  TAssign -> Domain : transition(ready → assigned, assignee = new)
+  Domain -> Ledger : append item.assigned {fresh: true}
+  TAssign -> OC : session.synthetic(new, "FRESH START … assignment … record id")
+  TAssign -> Ledger : append message.delivered
+  TAssign -> Ledger : append agent.gone {old, reason replaced}
+  TAssign -> OC : session.remove(old)\nor update(archived, title "retired Ana")
+  TAssign --> Coord : "Replaced Ana: new session …; old transcript deleted|archived"
+  New -> New : next prompt: current item = the assignment;\nno earlier work to reconstruct
+end
+note over Ledger
+  The name stays, the role stays, the model and
+  directory stay. Only the transcript is new.
+  History of the old session remains in the ledger.
+end note
+@enduml

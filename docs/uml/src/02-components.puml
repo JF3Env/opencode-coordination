@@ -1,0 +1,65 @@
+@startuml 02-components
+!include style.iuml
+title Components of opencode-coordination and their neighbours
+skinparam linetype ortho
+
+node "OpenCode server process (one or more per machine)" as Server {
+  component "opencode-coordination plugin" as Plugin {
+    component "tools/\nrole-filtered tool registry" as Tools
+    component "domain/\npure transitions & validation" as Domain
+    component "ledger/\nevents + projections + queries" as Ledger
+    component "deliver/\nper-recipient queue, pull, steer" as Deliver
+    component "clock/\ndeadlines, reminders, stalls, digests" as Clock
+    component "github/\ngh pr list/view → pr.* events" as GitHubSync
+    component "bridge/\nUnix socket peer \"opencode\"" as Bridge
+    component "prompt/\nrole system prompt" as Prompt
+    component "render/\nMarkdown pages + snapshot" as Render
+    component "config/\nproject profile" as Config
+  }
+  interface "ctx.session\n(get, create, synthetic, update)" as SessionApi
+  interface "ctx.event\n(session.status, idle, created)" as EventApi
+  interface "ctx.tool / ctx.agent\n(transform, permissions)" as ToolApi
+}
+
+database "SQLite ledger\n~/.local/share/opencode/coordination/<scope>/ledger.db\n(WAL, append-only events)" as DB
+folder ".opencode/coordination.json\n(project profile)" as Profile
+folder "Project pages\ndocs/coordination/ACTIVE.md, board, ROADMAP.md, STATUS.md, snapshot.json" as Pages
+component "CLI  coordination <cmd>\n(same library, run from Bash)" as CLI
+node "Claude Code session" as CCProc {
+  component "SendMessage / ListAgents" as CCMsg
+  component "Bash" as CCBash
+}
+folder "/tmp/cc-socks/<pid>.sock\n~/.claude/sessions/<pid>.json" as Sock
+cloud "GitHub" as GH
+component "gh CLI" as Gh
+
+Tools --> Domain
+Tools --> Ledger
+Tools --> Deliver
+Domain --> Ledger
+Deliver --> Ledger
+Deliver --> SessionApi : synthetic(steer)
+Clock --> Ledger
+Clock --> Deliver
+Clock --> Render
+GitHubSync --> Gh
+Gh --> GH
+GitHubSync --> Ledger
+Bridge --> Sock
+Bridge --> Ledger
+Bridge --> Deliver
+Prompt --> Ledger
+Prompt --> SessionApi
+Render --> Ledger
+Render --> Pages
+Config --> Profile
+Tools --> ToolApi
+Plugin --> EventApi
+Ledger --> DB
+CLI --> Ledger
+CLI --> Render
+CLI --> Bridge : notify owner process
+CCBash --> CLI
+CCMsg --> Sock
+Sock --> Bridge
+@enduml

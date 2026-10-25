@@ -1,0 +1,60 @@
+@startuml 20-deployment
+!include style.iuml
+title Deployment on one developer machine
+
+node "Developer machine (macOS)" {
+  node "opencode service\n(server process A)" as A {
+    artifact "opencode-coordination\n(plugin, bridge owner)" as PA
+    artifact "sessions: Coord. Isabel,\nPM Wilken, Eng. Ana …" as SA
+  }
+  node "opencode TUI in a worktree\n(server process B)" as B {
+    artifact "opencode-coordination\n(plugin, bridge client)" as PB
+    artifact "sessions: Eng. Bruno" as SB
+  }
+  node "Claude Code processes" as C {
+    artifact "session iceye-sars-sim-ae\n(coordinator, earlier)" as CA
+    artifact "session iceye-sars-sim-1b\n(product manager, earlier)" as CB
+  }
+  folder "~/.local/share/opencode/coordination/" as Store {
+    database "<scope-hash>/ledger.db (WAL)" as DB
+    file "<scope-hash>/ledger-2026-10-25.db (archived)" as DBOld
+    file "listener.json (bridge owner, token)" as Listener
+  }
+  folder "/tmp/cc-socks/" as Socks {
+    file "<pidA>.sock (peer \"opencode\")" as SockA
+    file "<pidClaude>.sock" as SockC
+  }
+  folder "~/.claude/sessions/" as Reg {
+    file "<pidA>.json (name opencode)" as RegA
+    file "<pidClaude>.json" as RegC
+    file "<pid>.<sha>.key (peer tokens)" as Keys
+  }
+  folder "project checkout(s)" as Repo {
+    file ".opencode/coordination.json (profile)" as Profile
+    file "docs/coordination/ACTIVE.md,\nROADMAP.md, STATUS.md, snapshot.json" as Pages
+  }
+  artifact "coordination CLI\n(node or bun)" as CLI
+}
+cloud "GitHub\n(gh CLI, PRs, comments, merges)" as GH
+cloud "npm registry\nopencode-coordination" as NPM
+
+PA --> DB
+PB --> DB
+PA --> SockA : listens
+PB ..> SockA : reads listener.json,\ndoes not bind
+CA --> SockA : SendMessage to "opencode"
+PA --> SockC : send to Claude peers
+PA --> RegA : publishes
+PA --> Keys
+PA --> Listener
+PA --> Profile : reads
+PA --> Pages : render
+PA --> GH : gh pr list / view
+CA --> CLI : Bash
+CB --> CLI : Bash
+CLI --> DB
+CLI --> SockA : ping owner
+NPM ..> PA : install
+NPM ..> PB : install
+DB ..> DBOld : archive when large
+@enduml

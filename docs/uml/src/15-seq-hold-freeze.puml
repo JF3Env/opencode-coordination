@@ -1,0 +1,44 @@
+@startuml 15-seq-hold-freeze
+!include style.iuml
+title Hold and freeze: broadcast, enforcement, lift
+
+actor "Coordinator" as Coord
+participant "coordination_hold" as THold
+participant "coordination_lift" as TLift
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "Engineers in scope" as Engs
+participant "coordination_ready" as TReady
+participant "coordination_assign" as TAssign
+
+Coord -> THold : kind hold, paths [docs/FEATURES.md, src/main/**],\nreason "capabilityassets run", liftOn "PR #N merges"
+THold -> Ledger : append hold.declared {id H…}
+THold -> Deliver : broadcast(scope, rendered HOLD)
+Deliver -> Engs : steer: HOLD H… covers … until … (record id)
+THold --> Coord : "Hold H… declared; 3 active items covered"
+
+Engs -> TReady : item whose scopeFiles intersect the hold
+TReady -> Ledger : holds covering item?
+TReady --> Engs : refusal "held by H… until <liftOn>"\n(event item.ready_refused)
+
+Coord -> TAssign : item touching held paths
+TAssign --> Coord : refusal "held by H…"
+
+== freeze ==
+Coord -> THold : kind freeze, reason "history rewrite"
+THold -> Ledger : append hold.declared {freeze}
+THold -> Deliver : broadcast(FREEZE)
+note right of Ledger
+  While a freeze is active: ready and assign refuse;
+  the profile may exempt roles (e.g. PM and coordinator
+  keep their one open PR each).
+end note
+
+== lift ==
+Coord -> TLift : hold H…
+TLift -> Ledger : append hold.lifted
+TLift -> Deliver : broadcast(LIFT H…)
+Deliver -> Engs : steer: LIFT H…
+TLift -> Ledger : items blocked by H… → in_progress\n(event item.unblocked)
+TLift --> Coord : "Lifted; 2 items unblocked"
+@enduml

@@ -1,0 +1,49 @@
+{
+  "name": "opencode-coordination",
+  "version": "0.1.0",
+  "description": "Roles, work items, messages, progress and history for teams of OpenCode and Claude Code agents. One append-only ledger; the pages are generated.",
+  "keywords": [
+    "opencode",
+    "plugin",
+    "agents",
+    "coordination",
+    "claude-code",
+    "ledger"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core.ts"
+  },
+  "bin": {
+    "coordination": "./dist/cli/main.js"
+  },
+  "files": [
+    "src",
+    "dist",
+    "profiles",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "uml:check": "java -jar $PLANTUML -checkonly docs/uml/src/*.puml",
+    "uml:render": "java -jar $PLANTUML -tsvg -o ../out docs/uml/src/*.puml",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

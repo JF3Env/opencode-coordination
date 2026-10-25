@@ -1,0 +1,55 @@
+@startuml 04-item-states
+!include style.iuml
+title Work item life cycle (who or what moves it)
+
+[*] --> proposed : PM: propose\nor coordinator: breakdown
+
+proposed --> accepted : coordinator: accept
+proposed --> deferred : coordinator: defer (reason)
+proposed --> rejected : coordinator: reject (reason)
+deferred --> accepted : coordinator: accept
+
+accepted --> ready : coordinator: breakdown done\nor PM: prioritize\n(scope and outcome complete)
+ready --> assigned : coordinator: assign\n[checks pass: collision, hold,\none open PR per engineer, upkeep share]
+assigned --> in_progress : engineer: claim\n(branch, worktree, files)
+in_progress --> in_progress : engineer: progress / note\nGitHub sync: new commit
+in_progress --> in_review : engineer: ready\n[PR is ready on GitHub\nand contains main; no hold covers it]
+in_review --> in_progress : coordinator: verdict changes\n(GitHub sync: PR back to draft)
+in_review --> merged : GitHub sync: mergedAt seen\nor coordinator: merged (sha)
+merged --> measured : engineer or PM: result\n(before, after, record, verdict)
+measured --> validated : PM: validate\n(independent reference, record)
+merged --> validated : PM: validate\n[upkeep item: no measure]
+
+state blocked {
+  blocked : blockedOn, unblockOn
+}
+assigned --> blocked : engineer: blocked
+in_progress --> blocked : engineer: blocked
+in_review --> blocked : coordinator: hold covers the PR
+blocked --> in_progress : unblock event seen\nor coordinator: lift
+
+in_progress --> ready : engineer: handover\nor clock: agent gone\n(assignee cleared)
+assigned --> ready : clock: no claim in 1 block\nor coordinator: reassign
+
+proposed --> cancelled : coordinator: cancel (reason)
+accepted --> cancelled
+ready --> cancelled
+assigned --> cancelled
+in_progress --> cancelled
+rejected --> [*]
+cancelled --> [*]
+validated --> [*]
+
+note right of ready
+  Stage "planned" = accepted
+  Stage "specified" = claim or scope
+  Stage "implemented" = merged (commit from sync)
+  Stage "tested" = ready with checks recorded
+  Stage "validated" = validate with reference
+end note
+note left of in_review
+  A prediction cannot change after claim.
+  A result needs a committed record.
+  Both refusals are events too.
+end note
+@enduml
