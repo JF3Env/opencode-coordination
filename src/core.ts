@@ -1,0 +1,11 @@
+// The part of the plugin that does not depend on the OpenCode host: ledger, domain, tools, views, clock, render.
+export { Ledger } from "./ledger/ledger.ts"
+export { loadProfile, defaultProfile, parseProfile, profileSchema } from "./config/profile.ts"
+export type { Profile } from "./config/profile.ts"
+export { ALL_TOOLS, callTool, toolByName } from "./tools/index.ts"
+export { registerSession, actorFor } from "./runtime.ts"
+export type { Runtime, HostControl, ClaudeLink, GitHubLink } from "./runtime.ts"
+export { renderPages, writePages, stalePages } from "./render/render.ts"
+export { importAgentMail } from "./ledger/import.ts"
+export { tick } from "./clock/clock.ts"
+export { buildPrompt } from "./prompt/prompt.ts"
