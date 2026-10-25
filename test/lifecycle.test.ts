@@ -281,3 +281,33 @@ test("a message to a declared CLI identity waits in its inbox; the plugin does n
   assert.equal(fx.rt.ledger.events({ type: "message.delivery_failed" }).length, 0)
   assert.equal(fx.rt.ledger.pendingCount(["cli:boss"]), 1)
 })
+
+test("a coordinator can defer a whole batch: every call succeeds and the product manager hears about each one", async () => {
+  const fx = await team()
+  const ids: string[] = []
+  for (let n = 0; n < 11; n++) ids.push(itemIdFrom(await fx.call("ses_pm", "propose", { ...proposal, title: `Item ${n}`, scopeFiles: [`src/p${n}/**`] })))
+  for (const id of ids) await fx.call("ses_co", "defer", { item: id, reason: `wait for the recount of ${id}` })
+  assert.equal(fx.rt.ledger.items((i) => i.state === "deferred").length, 11)
+  assert.equal(fx.rt.ledger.events({ type: "tool.refused" }).length, 0, "no call came back red")
+  const told = fx.delivered.filter((d) => d.sessionID === "ses_pm" && /ANSWER W[0-9a-z]+: DEFERRED/.test(d.text)).length
+  assert.equal(told, 11, "the product manager was told eleven times")
+})
+
+test("a tool notification that is too long is cut, not refused after the change was recorded", async () => {
+  const fx = await team()
+  const long = "x".repeat(9000)
+  const id = itemIdFrom(await fx.call("ses_pm", "propose", { ...proposal, why: long }))
+  assert.equal(fx.rt.ledger.item(id)?.state, "proposed")
+  const sent = fx.rt.ledger.messages({ toId: "ses_co" }).find((m) => m.item === id)
+  assert.ok(sent && sent.text.length <= 8000 && /cut at 8000/.test(sent.text))
+})
+
+test("free text between agents still meets the burst and duplicate gates", async () => {
+  const fx = await team()
+  const n = names(fx)
+  for (let i = 0; i < 6; i++) await fx.call("ses_ana", "ask", { to: n.bru, text: `Question number ${i}` })
+  assert.match(await fx.callFail("ses_ana", "ask", { to: n.bru, text: "One more" }), /Too many messages/)
+  const fx2 = await team()
+  await fx2.call("ses_ana", "ask", { to: names(fx2).bru, text: "Same words" })
+  assert.match(await fx2.callFail("ses_ana", "ask", { to: names(fx2).bru, text: "Same words" }), /just sent/)
+})

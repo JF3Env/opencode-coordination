@@ -105,7 +105,7 @@ export const ask = tool({
   async run({ rt, actor }, i) {
     const it = i.item ? needItem(rt, i.item) : undefined
     const { parties, role } = await toParties(rt, i.to, actor.session)
-    const base = { from: actorParty(actor), kind: "ask" as const, text: i.text, item: it?.id, needsAnswer: true, actor }
+    const base = { from: actorParty(actor), kind: "ask" as const, text: i.text, item: it?.id, needsAnswer: true, free: true, actor }
     const sent = role ? postToRole(rt, role, base, actor.session) : parties.map((to) => post(rt, { ...base, to }))
     for (const m of sent) await dispatch(rt, m)
     return `Asked ${sent.map((m) => m.to.name).join(", ")}; record ${sent.map((m) => m.short).join(", ")}. The answer is delivered to you; the clock follows up.`
@@ -123,7 +123,7 @@ export const answer = tool({
     const m = found.found
     if (!mailboxes(rt, actor.session).includes(m.to.id)) fail(`Record ${m.short} was not addressed to you.`)
     if (m.answeredBy) fail(`Record ${m.short} is already answered.`)
-    const reply = post(rt, { from: actorParty(actor), to: m.from, kind: "answer", text: i.text, item: m.item, inReplyTo: m.id, actor })
+    const reply = post(rt, { from: actorParty(actor), to: m.from, kind: "answer", text: i.text, item: m.item, inReplyTo: m.id, free: true, actor })
     // Answering a resent copy answers the question it repeats, so the clock stops following the original.
     const original = m.inReplyTo ? rt.ledger.message(m.inReplyTo) : undefined
     const closes = original && !original.answeredBy && original.needsAnswerBy && mailboxes(rt, actor.session).includes(original.to.id) ? [m.id, original.id] : [m.id]

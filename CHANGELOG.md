@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The duplicate and burst gates and the length limit now apply only to free text written by an agent (`ask`, `answer`). A message a tool composes after it recorded a change is never refused: a coordinator deferring eleven proposals in a row had every change recorded, ten of them never told the product manager, and each call returned an error. A tool notification over the limit is cut with a pointer to `coordination_item` instead of failing.
 - The role is bound to the agent a session started with: an agent switch inside the session is recorded as `agent.role_denied` and ignored, subagents never hold a role, and tools run with the role the ledger holds, not the agent id of the call. CLI and Claude Code identities hold only the role the profile's new `cli` block grants their name; `--role` only checks it. The README says where this is a guard and where it is not, with the OpenCode permission rule that closes the shell path for engineers.
 - A blocked item no longer uses up the engineer's open-item slot, so the coordinator can assign other work while it waits.
 - `ready` without a GitHub link keeps the pull-request number given; the assignment clears the engineer's availability flag, so idleness is counted from the next availability.

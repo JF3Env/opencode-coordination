@@ -68,7 +68,7 @@ coordination render --check        # exit 1 when a generated page is stale
 
 ## Status and limits
 
-Version 0.1.0. 48 tools, 58 tests (one reads a local agent-mail store and is skipped unless `AGENT_MAIL_STORE` is set). Read this before relying on it:
+Version 0.1.0. 48 tools, 61 tests (one reads a local agent-mail store and is skipped unless `AGENT_MAIL_STORE` is set). Read this before relying on it:
 
 - **Not yet run inside a live OpenCode.** The host adapter is tested against a fake host built from the published `@opencode/plugin` types, and the ledger is tested on Node's `node:sqlite` and on Bun's `bun:sqlite`. The first live run is yours; please open an issue with what you see.
 - **Role filtering happens when a tool runs,** from the session's agent id, and the prompt lists only your role's tools. Tools are not hidden from other roles' tool lists.
