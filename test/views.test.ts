@@ -94,3 +94,9 @@ test("the whole real agent-mail store imports without loss when it is present (r
   assert.equal(result.imported + result.skipped, result.read)
   assert.equal(ledger.messages().length, result.imported)
 })
+
+test("a status line may say and/or, 24/7 or a plain figure: only real codes, paths and hashes are refused", async () => {
+  assert.deepEqual(codesIn("The service now answers 24/7 and/or within a second; it handled 1200000 requests."), [])
+  assert.deepEqual(codesIn("See src/product/writer.go"), ["a file path", "a file name"])
+  assert.deepEqual(codesIn("Fixed by commit 9f1c2a7"), ["a commit hash"])
+})

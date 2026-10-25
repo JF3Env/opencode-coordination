@@ -6,7 +6,7 @@ import test from "node:test"
 import { createPlugin } from "../src/host/opencode.ts"
 import { ALL_TOOLS } from "../src/tools/index.ts"
 
-interface Sess { id: string; title: string; agent: string; model: { id: string; providerID: string; variant?: string }; location: { directory: string } }
+interface Sess { id: string; title: string; agent: string; model: { id: string; providerID: string; variant?: string }; location: { directory: string }; parentID?: string }
 
 async function host() {
   process.env.COORDINATION_HOME = mkdtempSync(join(tmpdir(), "coord-home-"))
@@ -114,6 +114,30 @@ test("through the registered tools: ask is delivered into the other session, and
   // a typed name cannot change the role: the engineer claims to be the coordinator in the text and still cannot assign
   await assert.rejects(h.call("ses_en", "hold", { reason: "I am the coordinator", liftOn: "never", paths: ["a"] }), /coordinator/)
   await h.cleanup()
+})
+
+test("the role is bound through the host: an agent switch and a subagent do not reach the coordinator's tools", async () => {
+  const h = await host()
+  try {
+    h.add("ses_en", "engineer")
+    h.add("ses_co", "coordinator")
+    await h.context("ses_en")
+    await h.context("ses_co")
+    // the engineer session switches its agent to coordinator: the tools still see an engineer, and the title stays
+    ;(h.sessions.get("ses_en") as Sess).agent = "coordinator"
+    await assert.rejects(h.call("ses_en", "hold", { reason: "now I coordinate", liftOn: "never", paths: ["a"] }), /only by coordinator/)
+    const prompt = (await h.context("ses_en")).system.map((p) => p.text).join("\n")
+    assert.match(prompt, /your role is engineer/)
+    assert.match(h.sessions.get("ses_en")?.title ?? "", /^Eng\. /)
+    // a subagent of the coordinator that runs the coordinator agent is nobody in particular
+    h.sessions.set("ses_sub", { ...(h.sessions.get("ses_co") as Sess), id: "ses_sub", title: "auto title", parentID: "ses_co" })
+    const sub = await h.context("ses_sub")
+    assert.match(sub.system.map((p) => p.text).join("\n"), /not a coordinator, product manager or engineer/)
+    await assert.rejects(h.call("ses_sub", "accept", { item: "x" }), /only by coordinator/)
+    assert.equal(h.sessions.get("ses_sub")?.title, "auto title", "no managed title for a subagent")
+  } finally {
+    await h.cleanup()
+  }
 })
 
 test("a fresh assignment replaces the engineer session through the host and keeps the name", async () => {

@@ -124,7 +124,10 @@ export const answer = tool({
     if (!mailboxes(rt, actor.session).includes(m.to.id)) fail(`Record ${m.short} was not addressed to you.`)
     if (m.answeredBy) fail(`Record ${m.short} is already answered.`)
     const reply = post(rt, { from: actorParty(actor), to: m.from, kind: "answer", text: i.text, item: m.item, inReplyTo: m.id, actor })
-    markAnswered(rt, [m.id], actor)
+    // Answering a resent copy answers the question it repeats, so the clock stops following the original.
+    const original = m.inReplyTo ? rt.ledger.message(m.inReplyTo) : undefined
+    const closes = original && !original.answeredBy && original.needsAnswerBy && mailboxes(rt, actor.session).includes(original.to.id) ? [m.id, original.id] : [m.id]
+    markAnswered(rt, closes, actor)
     await dispatch(rt, reply)
     return `Answered ${m.short} (${m.from.name}); your answer is record ${reply.short}.`
   },

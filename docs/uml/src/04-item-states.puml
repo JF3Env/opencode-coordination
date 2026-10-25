@@ -26,16 +26,21 @@ state blocked {
 assigned --> blocked : engineer: blocked
 in_progress --> blocked : engineer: blocked
 in_review --> blocked : coordinator: hold covers the PR
-blocked --> in_progress : unblock event seen\nor coordinator: lift
+blocked --> in_progress : coordinator: lift\n(back to the state before the block)
+blocked --> in_review : coordinator: lift\n(it was in review)
 
 in_progress --> ready : engineer: handover\nor clock: agent gone\n(assignee cleared)
-assigned --> ready : clock: no claim in 1 block\nor coordinator: reassign
+in_review --> ready : engineer: handover\nor GitHub sync: PR closed unmerged
+blocked --> ready : engineer: handover\nor clock: agent gone
+assigned --> ready : coordinator: reassign\nor clock: agent gone\n(an unclaimed assignment is reported, not moved)
 
 proposed --> cancelled : coordinator: cancel (reason)
 accepted --> cancelled
 ready --> cancelled
 assigned --> cancelled
 in_progress --> cancelled
+in_review --> cancelled
+blocked --> cancelled
 rejected --> [*]
 cancelled --> [*]
 validated --> [*]

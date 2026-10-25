@@ -151,9 +151,11 @@ const CODE_PATTERNS: Array<[RegExp, string]> = [
   [/\b[A-Z]{2,}-\d+\b/, "a record code such as DEF-12"],
   [/\bD\d+\b/, "a decision code"],
   [/`/, "a code span"],
-  [/\b[\w.-]+\/[\w./-]+\b/, "a file path"],
+  // A path has two separators or ends in a file extension; "and/or", "24/7" and "km/h" are words.
+  [/\b[\w.-]+\/[\w.-]+\/[\w./-]*\b|\b[\w.-]+\/[\w-]+\.\w+\b/, "a file path"],
   [/\b[\w-]+\.(md|go|ts|json|py|yaml|yml)\b/i, "a file name"],
-  [/\b[0-9a-f]{7,40}\b/, "a commit hash"],
+  // A hash mixes digits and letters; a plain number such as 1200000 is a figure, not a commit.
+  [/\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/, "a commit hash"],
 ]
 
 export function codesIn(text: string): string[] {

@@ -203,13 +203,17 @@ export function project(db: Db, e: StoredEvent): void {
         if (p.identifiers) item.identifiers = p.identifiers
       })
     case "item.assigned":
-      return mutateItem(db, e, (item) => {
+      mutateItem(db, e, (item) => {
         setState(item, "assigned")
         item.assignee = p.assignee
         item.assigneeName = p.assigneeName
         item.blockedOn = undefined
         item.unblockOn = undefined
       })
+      // An engineer with work is no longer available: the clock counts idleness from the next availability.
+      const assignee = p.assignee ? read<AgentDoc>(db, "agents", "session_id", p.assignee) : undefined
+      if (assignee?.available) saveAgent(db, { ...assignee, available: false, availableAt: undefined })
+      return
     case "item.claimed":
       return mutateItem(db, e, (item) => {
         setState(item, "in_progress")
@@ -237,10 +241,11 @@ export function project(db: Db, e: StoredEvent): void {
         setState(item, "in_review")
         stage(item, "tested", e)
         item.lastProgressAt = e.at
+        if (typeof p.pr === "number") item.pr = p.pr
       })
     case "item.verdict":
       return mutateItem(db, e, (item) => {
-        item.verdict = { at: e.at, verdict: p.verdict, findings: p.findings ?? "" }
+        item.verdict = { at: e.at, verdict: p.verdict, findings: p.findings ?? "", ...(p.commentAt ? { commentAt: p.commentAt } : {}) }
       })
     case "item.returned":
       return mutateItem(db, e, (item) => {

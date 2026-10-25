@@ -140,7 +140,9 @@ export interface AssignCheck {
 export function checkAssignable(rt: Runtime, item: Item, target: AgentDoc, self: string): AssignCheck {
   const warnings: string[] = []
   if (target.role !== "engineer") return { refusal: `${target.name} is a ${target.role}; ASSIGN goes only to an engineer.`, warnings }
-  const open = rt.ledger.items((o) => o.id !== item.id && o.assignee === target.sessionID && isActive(o))
+  // A blocked item waits on something outside the engineer's hands, so it does not use up the open-item limit: the
+  // engineer was told to call available and take something else. Its files still count for overlap below.
+  const open = rt.ledger.items((o) => o.id !== item.id && o.assignee === target.sessionID && isActive(o) && o.state !== "blocked")
   if (open.length >= rt.profile.limits.openItemsPerEngineer) return { refusal: `${target.name} already has ${open.map((o) => o.id).join(", ")}; the limit is ${rt.profile.limits.openItemsPerEngineer} open item(s) per engineer.`, warnings }
   const holds = holdsCovering(rt, item, rt.profile.freezeExempt.includes("coordinator"))
   if (holds.length) return { refusal: `${item.id} is held by ${holds.map((h) => `${h.id} (${h.reason}; until ${h.liftOn})`).join(", ")}.`, warnings }

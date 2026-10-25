@@ -33,6 +33,9 @@ function labelOf(m: MessageDoc): string {
 /** One delivery pass for a session: reserve its pending messages, steer them in, mark them delivered. */
 export async function pull(rt: Runtime, sessionID: string): Promise<number> {
   if (!rt.host) return 0
+  // Only an OpenCode session can be steered. A CLI or Claude Code identity reads its inbox itself.
+  const kind = rt.ledger.agent(sessionID)?.kind
+  if (kind && kind !== "opencode") return 0
   const busy = pulling.get(rt) ?? new Set<string>()
   pulling.set(rt, busy)
   if (busy.has(sessionID)) return 0

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { join, resolve } from "node:path"
-import { loadProfile } from "../config/profile.ts"
+import { pathToFileURL } from "node:url"
+import { PROFILE_FILE, declaredRole, loadProfile } from "../config/profile.ts"
 import { inboundText } from "../deliver/deliver.ts"
 import { SYSTEM_ACTOR } from "../domain/system.ts"
 import type { Actor, Role } from "../domain/types.ts"
@@ -25,6 +26,7 @@ Read:
   tools                       every tool with the roles that may use it
 Act as a Claude Code or script session (identity is declared, never an OpenCode session):
   call <tool> [json] --as <name> [--role coordinator|product-manager|engineer]
+                              the role is the one the profile's cli block grants the name; --role only checks it
   inbox --as <name>           print and mark delivered the messages waiting for you
 Project pages:
   render [--check]            write the generated pages; with --check, exit 1 if any is stale
@@ -69,13 +71,19 @@ async function open(args: Args): Promise<Runtime> {
   return rt
 }
 
-/** The CLI acts as a declared session of kind cli. It never acts as a session the host authenticates. */
-function declaredActor(rt: Runtime, name: string, role: Role): Actor {
+/**
+ * The CLI acts as a declared session of kind cli. It never acts as a session the host authenticates, and it holds only
+ * the role the profile's cli block grants its name; a --role that disagrees is refused.
+ */
+function declaredActor(rt: Runtime, name: string, requested?: Role): Actor {
   const known = rt.ledger.findAgents(name)[0]
   if (known) {
     if (known.kind === "opencode") throw new ToolFailure(`${known.name} is an OpenCode session; the CLI cannot act as it. Use a name of your own.`)
+    if (requested && requested !== known.role) throw new ToolFailure(`${known.name} is ${known.role} in this ledger; a declared role does not change.`)
     return { session: known.sessionID, name: known.name, role: known.role }
   }
+  const role = declaredRole(rt.profile, name)
+  if (requested && requested !== role) throw new ToolFailure(`${name} is not listed under cli.${requested} in ${PROFILE_FILE}, so it cannot act as ${requested}. It acts as ${role}.`)
   const session = `cli:${name}`
   const actor: Actor = { session, name, role }
   rt.ledger.appendMany([
@@ -123,7 +131,7 @@ export async function run(argv: string[], out: (text: string) => void = (t) => p
         if (!spec) throw new ToolFailure(`No tool ${toolName ?? ""}. coordination tools lists them.`)
         const as = args.flags.get("as")
         if (!as) throw new ToolFailure("call needs --as <name>: who is acting.")
-        const actor = declaredActor(rt, as, (args.flags.get("role") ?? "other") as Role)
+        const actor = declaredActor(rt, as, args.flags.get("role") as Role | undefined)
         out(await callTool(rt, spec, actor, json ? JSON.parse(json) : {}))
         await new Promise((r) => setTimeout(r, 200))
         return 0
@@ -131,7 +139,7 @@ export async function run(argv: string[], out: (text: string) => void = (t) => p
       case "inbox": {
         const as = args.flags.get("as")
         if (!as) throw new ToolFailure("inbox needs --as <name>.")
-        const actor = declaredActor(rt, as, (args.flags.get("role") ?? "other") as Role)
+        const actor = declaredActor(rt, as, args.flags.get("role") as Role | undefined)
         const pending = rt.ledger.claimPending(mailboxes(rt, actor.session), rt.now())
         if (!pending.length) out("No message is waiting.")
         for (const m of pending) {
@@ -187,7 +195,7 @@ export async function run(argv: string[], out: (text: string) => void = (t) => p
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/coordination")) {
+if ((process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) || process.argv[1]?.endsWith("/coordination")) {
   run(process.argv.slice(2)).then((code) => process.exit(code), (error) => {
     console.error(error instanceof Error ? error.message : error)
     process.exit(1)

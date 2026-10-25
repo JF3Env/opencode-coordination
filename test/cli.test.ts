@@ -20,14 +20,19 @@ async function cli(dir: string, ...argv: string[]) {
 test("the CLI acts as declared Claude Code sessions: propose, read the board, render, check, and the pages go stale on a hand edit", async () => {
   const dir = env()
   mkdirSync(join(dir, ".opencode"))
-  writeFileSync(join(dir, ".opencode", "coordination.json"), JSON.stringify({ fronts: [{ id: "G1", title: "A product" }] }))
+  writeFileSync(join(dir, ".opencode", "coordination.json"), JSON.stringify({ fronts: [{ id: "G1", title: "A product" }], cli: { engineer: ["boss"], "product-manager": ["boss2"] } }))
   const proposal = JSON.stringify({ title: "Write it", front: "G1", moves: "G1.1 reach", predicted: "up", why: "constraint", scopeFiles: ["src/**"] })
   const denied = await cli(dir, "call", "propose", proposal, "--as", "boss", "--role", "engineer")
   assert.equal(denied.code, 1)
   assert.match(denied.text, /only by product-manager/)
   const stillDenied = await cli(dir, "call", "propose", proposal, "--as", "boss", "--role", "product-manager")
   assert.equal(stillDenied.code, 1, "a declared role cannot be changed by a flag later")
-  const ok = await cli(dir, "call", "propose", proposal, "--as", "boss2", "--role", "product-manager")
+  assert.match(stillDenied.text, /a declared role does not change/)
+  const unlisted = await cli(dir, "call", "propose", proposal, "--as", "stranger", "--role", "product-manager")
+  assert.equal(unlisted.code, 1, "a name the profile does not list gets no role")
+  assert.match(unlisted.text, /not listed under cli.product-manager/)
+  assert.match((await cli(dir, "call", "propose", proposal, "--as", "stranger")).text, /only by product-manager/)
+  const ok = await cli(dir, "call", "propose", proposal, "--as", "boss2")
   assert.equal(ok.code, 0, ok.text)
   const id = /\b(W[0-9a-z]+)\b/.exec(ok.text)?.[1] as string
   assert.match((await cli(dir, "board")).text, new RegExp(`G1 — A product[\\s\\S]*Later:[\\s\\S]*${id} \\[proposed\\] Write it`))
@@ -46,6 +51,8 @@ test("the CLI acts as declared Claude Code sessions: propose, read the board, re
 
 test("a message to a CLI session waits in its inbox and is printed once", async () => {
   const dir = env()
+  mkdirSync(join(dir, ".opencode"))
+  writeFileSync(join(dir, ".opencode", "coordination.json"), JSON.stringify({ cli: { coordinator: ["co1"], "product-manager": ["pm1"] } }))
   await cli(dir, "call", "whoami", "{}", "--as", "pm1", "--role", "product-manager")
   await cli(dir, "call", "whoami", "{}", "--as", "co1", "--role", "coordinator")
   const asked = await cli(dir, "call", "ask", JSON.stringify({ to: "co1", text: "Which front first?" }), "--as", "pm1", "--role", "product-manager")

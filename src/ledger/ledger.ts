@@ -132,8 +132,9 @@ export class Ledger {
     const where: string[] = []
     const params: unknown[] = []
     if (filter.type) {
-      where.push("type LIKE ?")
-      params.push(filter.type.endsWith("*") ? `${filter.type.slice(0, -1)}%` : filter.type)
+      // A trailing * is a prefix; otherwise the type is matched exactly (LIKE would read _ as a wildcard).
+      if (filter.type.endsWith("*")) { where.push("type LIKE ?"); params.push(`${filter.type.slice(0, -1)}%`) }
+      else { where.push("type = ?"); params.push(filter.type) }
     }
     if (filter.subject) { where.push("subject = ?"); params.push(filter.subject) }
     if (filter.actorSession) { where.push("actor_session = ?"); params.push(filter.actorSession) }

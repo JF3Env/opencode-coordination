@@ -6,7 +6,15 @@ import { itemIdFrom, names, team } from "./helpers.ts"
 function fakeGh(prs: unknown[], extra: Record<string, string> = {}): Gh {
   return async (args) => {
     const joined = args.join(" ")
-    if (args[0] === "pr" && args[1] === "list") return JSON.stringify(prs)
+    if (args[0] === "pr" && args[1] === "view") {
+      const hit = (prs as Array<{ number: number }>).find((p) => String(p.number) === args[2])
+      if (!hit) throw new Error("no pull requests found")
+      return JSON.stringify(hit)
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      const head = args.indexOf("--head")
+      return JSON.stringify(head < 0 ? prs : (prs as Array<{ headRefName: string }>).filter((p) => p.headRefName === args[head + 1]))
+    }
     if (joined.includes("/compare/")) return extra.compare ?? "ahead"
     if (joined.includes("/contents/")) {
       if (joined.includes("missing")) throw new Error("404")
@@ -92,4 +100,47 @@ test("measure keeps a record that is not on main as a claim, not a measurement",
   assert.equal(fx.rt.ledger.measures()[0]?.claimed, true)
   fx.recordsOnMain.add("docs/evidence/x.md")
   assert.match(await fx.call("ses_pm", "measure", { name: "z0", value: "3.60", unit: "sigma", record: "docs/evidence/x.md" }), /Recorded z0 = 3.60/)
+})
+
+test("ready finds the pull request by its number even when it is not among the recent ones", async () => {
+  const { fx, id } = await claimed()
+  const old = { number: 3, isDraft: false, headRefName: "feat/t", headRefOid: "ccc3333", mergedAt: null, mergeCommit: null, closedAt: null, body: "Moves: G1 x", comments: [] }
+  const gh: Gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "view" && args[2] === "3") return JSON.stringify(old)
+    if (args[0] === "pr" && args[1] === "list") return JSON.stringify(args.includes("--head") ? [old] : [])
+    if (args.join(" ").includes("/compare/release...")) return "ahead"
+    throw new Error(`unexpected gh ${args.join(" ")}`)
+  }
+  fx.rt.github = makeGitHub("o/r", gh, "release")
+  assert.equal((await fx.rt.github.prForItem(undefined, 3))?.number, 3)
+  assert.equal((await fx.rt.github.prForItem("feat/t", undefined))?.containsMain, true, "contains the configured base branch")
+  await fx.call("ses_ana", "ready", { item: id, pr: 3, checks: [{ name: "t", result: "ok" }], result: "r" })
+  assert.equal(fx.rt.ledger.item(id)?.pr, 3)
+})
+
+test("a steward comment that requests changes sends the item back to work and tells the engineer", async () => {
+  const { fx, id } = await claimed()
+  fx.rt.ledger.append({ type: "item.in_review", actor: { session: "ses_ana", name: "x", role: "engineer" }, subject: id, payload: { id } })
+  const pr = {
+    number: 7, isDraft: false, headRefName: "feat/t", headRefOid: "aaa1111", mergedAt: null, mergeCommit: null, closedAt: null, body: "Moves: G1\nAgent: " + names(fx).ana,
+    comments: [{ body: "STEWARD: CHANGES REQUESTED\n1. add the check", createdAt: "2099-01-01T00:00:00Z" }],
+  }
+  const out = await syncPullRequests(fx.rt, makeGitHub("o/r", fakeGh([pr])))
+  assert.deepEqual(out.verdicts, [id])
+  assert.equal(fx.rt.ledger.item(id)?.state, "in_progress")
+  assert.match(fx.delivered.filter((d) => d.sessionID === "ses_ana").map((d) => d.text).join("\n"), /CHANGES REQUESTED[\s\S]*add the check/)
+  assert.deepEqual((await syncPullRequests(fx.rt, makeGitHub("o/r", fakeGh([pr])))).verdicts, [], "read once")
+})
+
+test("a merge of an item that was assigned but never claimed is still recorded", async () => {
+  const fx = await team({ github: { repo: "o/r" } }, { github: false })
+  const n = names(fx)
+  const id = itemIdFrom(await fx.call("ses_pm", "propose", { title: "T", moves: "G1 x", predicted: "up", why: "w", scopeFiles: ["a/**"] }))
+  await fx.call("ses_co", "accept", { item: id })
+  await fx.call("ses_co", "refine", { item: id, scopeFiles: ["a/**"], doneWhen: "d" })
+  await fx.call("ses_co", "assign", { item: id, engineer: n.ana })
+  fx.rt.ledger.append({ type: "item.pr_linked", actor: { session: "ses_co", name: "c", role: "coordinator" }, subject: id, payload: { id, pr: 9 } })
+  const pr = { number: 9, isDraft: false, headRefName: "feat/x", headRefOid: "aaa1111", mergedAt: "2026-10-25T11:00:00Z", mergeCommit: { oid: "bbb2222cc" }, closedAt: "2026-10-25T11:00:00Z", body: "Moves: G1 x", comments: [] }
+  assert.deepEqual((await syncPullRequests(fx.rt, makeGitHub("o/r", fakeGh([pr])))).merged, [id])
+  assert.equal(fx.rt.ledger.item(id)?.state, "merged")
 })

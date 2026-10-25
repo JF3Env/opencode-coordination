@@ -64,19 +64,49 @@ coordination render --check        # exit 1 when a generated page is stale
 
 ## Profile
 
-`.opencode/coordination.json` (all fields optional): role aliases, `blockMinutes`, `fronts`, `github.repo` / `syncMinutes` / `agentLine`, extra prompt `rules`, `render` paths (and `auto`), `limits`, `freezeExempt`. Unknown keys are an error.
+`.opencode/coordination.json` (all fields optional): role aliases, `cli` (the names a CLI or Claude Code identity may declare per role), `blockMinutes`, `fronts`, `github.repo` / `baseBranch` (default `main`) / `syncMinutes` / `agentLine`, extra prompt `rules`, `render` paths (and `auto`), `limits`, `freezeExempt`. Unknown keys are an error.
 
 ## Status and limits
 
-Version 0.1.0. 48 tools, 45 tests (one reads a local agent-mail store and is skipped unless `AGENT_MAIL_STORE` is set). Read this before relying on it:
+Version 0.1.0. 48 tools, 58 tests (one reads a local agent-mail store and is skipped unless `AGENT_MAIL_STORE` is set). Read this before relying on it:
 
 - **Not yet run inside a live OpenCode.** The host adapter is tested against a fake host built from the published `@opencode/plugin` types, and the ledger is tested on Node's `node:sqlite` and on Bun's `bun:sqlite`. The first live run is yours; please open an issue with what you see.
 - **Role filtering happens when a tool runs,** from the session's agent id, and the prompt lists only your role's tools. Tools are not hidden from other roles' tool lists.
-- **CLI identity is declared, not proven.** It is refused for any name that belongs to an OpenCode session, and a declared role cannot be changed later.
+- **The role is bound to the agent you pick in OpenCode.** It comes from the session's agent id on the first turn and stays: switching the agent inside the session does not change it (the attempt is recorded), and a subagent never holds a role, whatever agent it runs. So the model each role uses is the one you configured for that agent.
+- **CLI identity is declared, not proven.** A name holds only the role the profile's `cli` block grants it, is refused for any name that belongs to an OpenCode session, and cannot change role later. This is a guard against mistakes, not a security boundary: see [Who can hold a role](#who-can-hold-a-role).
 - **No archive of a very large ledger yet.** Nothing is ever pruned; archiving a closed database file is planned.
 - **GitHub is polled** through the `gh` CLI every `syncMinutes`; a failure is recorded and changes nothing.
 - Generated pages are written only by `coordination render` unless `render.auto` is set, so your working tree is not touched behind your back.
 - Do not run it next to `agent-mail`.
+
+## Who can hold a role
+
+The hard guarantee covers OpenCode sessions only. There the role comes from the agent id the host authenticates, is bound to the session on its first turn, and the model is the one you configured for that agent. Nothing a model writes can change it.
+
+A CLI or Claude Code identity is different. `coordination call --as <name>` holds the role the profile's `cli` block grants that name, but the name is typed, not proven. Any session with a shell under the same user account can run the CLI with any listed name, and that includes an OpenCode engineer with the bash tool. A token file would not help: every session reads the same files.
+
+So, if the coordinator or the product manager works from Claude Code through the CLI, close the gap on the OpenCode side by denying the CLI to the agents that must not hold those roles. In `opencode.json` (or `.opencode/opencode.json` in the project):
+
+```json
+{
+  "agent": {
+    "engineer": {
+      "permission": {
+        "bash": {
+          "coordination *": "deny",
+          "*cli/main.ts*": "deny",
+          "*cli/main.js*": "deny",
+          "*": "allow"
+        }
+      }
+    }
+  }
+}
+```
+
+The same rules go in the front matter of an agent file (`.opencode/agent/engineer.md`) under `permission: bash:`. The three patterns cover the installed `coordination` binary and the CLI run from a checkout with `node` or `bun`. The engineer keeps every `coordination_*` tool, which the plugin role-checks; only the shell path around them is closed.
+
+The other way round is simpler: run the coordinator inside OpenCode as its own agent, pointed at the model you want. It then has a host-authenticated identity and needs no CLI at all.
 
 ## Develop
 

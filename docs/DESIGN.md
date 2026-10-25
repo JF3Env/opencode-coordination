@@ -18,7 +18,7 @@ Anti-goals, which would be failures even if everything else worked: an agent act
 
 1. **Append-only.** `events` refuses UPDATE and DELETE (database triggers). Corrections are new events.
 2. **Projections are a pure function of the events.** `Ledger.rebuild()` drops them and replays; the tests compare before and after. A projection never reads the clock or the network.
-3. **The actor is not typed by the caller.** Role comes from the session's agent id (`roleOf`), name and session from the host. A text cannot claim another sender.
+3. **The actor is not typed by the caller.** Role comes from the session's agent id (`roleOf`) on the first turn and is bound to the session from then on: an agent switch inside the session is recorded (`agent.role_denied`) and ignored, a subagent (a session with a parent) is always `other`, and a CLI or Claude Code identity holds only the role the profile's `cli` block grants its name. Name and session come from the host. A text cannot claim another sender.
 4. **One clock.** The ledger stamps events with `ledger.now()`, the runtime and the clock job use the same function, so deadlines and event times cannot disagree (a test found and pinned this).
 5. **Nothing is pruned.** A record id cited today resolves tomorrow.
 
