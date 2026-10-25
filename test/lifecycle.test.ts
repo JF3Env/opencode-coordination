@@ -193,5 +193,121 @@ test("a session that repeats itself within a minute adds no events; a change doe
   registerSession(fx.rt, { sessionID: "s1", agent: "engineer", directory: "/repo" })
   assert.equal(fx.rt.ledger.eventCount(), first + 1, "a minute later the sighting is refreshed")
   registerSession(fx.rt, { sessionID: "s1", agent: "coordinator", directory: "/repo" })
-  assert.equal(fx.rt.ledger.agent("s1")?.role, "coordinator", "a role switch is recorded at once")
+  assert.equal(fx.rt.ledger.agent("s1")?.role, "engineer", "the role is bound to the agent the session started with")
+  assert.equal(fx.rt.ledger.events({ type: "agent.role_denied" }).length, 1, "the attempt is on record")
+  assert.equal(fx.rt.ledger.agent("s1")?.agent, "coordinator", "the agent of the moment is still noted")
+})
+
+test("a subagent never holds a role, whatever agent it runs, and a helper that becomes an engineer gets a name", async () => {
+  const { fixture } = await import("./helpers.ts")
+  const { registerSession } = await import("../src/runtime.ts")
+  const fx = await fixture()
+  registerSession(fx.rt, { sessionID: "eng", agent: "engineer", directory: "/repo" })
+  const child = registerSession(fx.rt, { sessionID: "eng-child", agent: "coordinator", directory: "/repo", parent: "eng" })
+  assert.equal(child.role, "other")
+  assert.equal(child.name, "eng-child", "no pool name is spent on it")
+  assert.match(await fx.callFail("eng-child", "accept", { item: "x" }), /only by coordinator/)
+  registerSession(fx.rt, { sessionID: "helper", agent: "build", directory: "/repo" })
+  assert.equal(fx.rt.ledger.agent("helper")?.role, "other")
+  fx.clock.advance(61_000)
+  const promoted = registerSession(fx.rt, { sessionID: "helper", agent: "engineer", directory: "/repo" })
+  assert.equal(promoted.role, "engineer", "a session with no role yet may take one")
+  assert.notEqual(promoted.name, "helper")
+})
+
+test("a blocked item does not use up the engineer's open-item slot, so other work can be assigned meanwhile", async () => {
+  const fx = await team()
+  const n = names(fx)
+  const mk = async (title: string, files: string[]) => {
+    const id = itemIdFrom(await fx.call("ses_pm", "propose", { ...proposal, title, scopeFiles: files }))
+    await fx.call("ses_co", "accept", { item: id })
+    await fx.call("ses_co", "refine", { item: id, scopeFiles: files, doneWhen: "done" })
+    return id
+  }
+  const a = await mk("A", ["src/a/**"])
+  const b = await mk("B", ["src/b/**"])
+  await fx.call("ses_co", "assign", { item: a, engineer: n.ana })
+  await fx.call("ses_ana", "claim", { item: a, branch: "a", worktree: "/w/a", files: ["src/a/**"] })
+  assert.match(await fx.callFail("ses_co", "assign", { item: b, engineer: n.ana }), /already has/)
+  await fx.call("ses_ana", "blocked", { item: a, on: "the capture", unblockOn: "the capture arrives" })
+  await fx.call("ses_co", "assign", { item: b, engineer: n.ana })
+  assert.equal(fx.rt.ledger.item(b)?.state, "assigned")
+  assert.equal(fx.rt.ledger.item(a)?.state, "blocked", "the blocked item keeps its engineer")
+})
+
+test("ready without a GitHub link keeps the pull-request number the engineer gives", async () => {
+  const fx = await team({}, { github: false })
+  const n = names(fx)
+  const id = itemIdFrom(await fx.call("ses_pm", "propose", proposal))
+  await fx.call("ses_co", "accept", { item: id })
+  await fx.call("ses_co", "refine", { item: id, scopeFiles: ["src/a/**"], doneWhen: "d" })
+  await fx.call("ses_co", "assign", { item: id, engineer: n.ana })
+  await fx.call("ses_ana", "claim", { item: id, branch: "b", worktree: "/w", files: ["src/a/**"] })
+  await fx.call("ses_ana", "ready", { item: id, pr: 33, checks: [{ name: "t", result: "ok" }], result: "r" })
+  assert.equal(fx.rt.ledger.item(id)?.pr, 33)
+  assert.match(await fx.call("ses_co", "queue", {}), /PR #33/)
+})
+
+test("a session that comes back after being gone keeps its name", async () => {
+  const { fixture } = await import("./helpers.ts")
+  const { registerSession } = await import("../src/runtime.ts")
+  const fx = await fixture()
+  registerSession(fx.rt, { sessionID: "s1", agent: "engineer", directory: "/repo" })
+  registerSession(fx.rt, { sessionID: "s2", agent: "engineer", directory: "/repo" })
+  const name = fx.rt.ledger.agent("s2")?.name as string
+  fx.rt.ledger.append({ type: "agent.gone", actor: { session: "system", name: "coordination", role: "other" }, payload: { sessionID: "s2" } })
+  fx.clock.advance(60_000)
+  assert.equal(registerSession(fx.rt, { sessionID: "s2", agent: "engineer", directory: "/repo" }).name, name)
+})
+
+test("a role alias from the profile is a valid address for ask", async () => {
+  const { fixture } = await import("./helpers.ts")
+  const fx = await fixture({ roles: { coordinator: ["lead"] } })
+  fx.register("ses_lead", "lead")
+  fx.register("ses_ana", "engineer")
+  assert.equal(fx.rt.ledger.agent("ses_lead")?.role, "coordinator")
+  await fx.call("ses_ana", "ask", { to: "lead", text: "May I start?" })
+  assert.ok(fx.delivered.some((d) => d.sessionID === "ses_lead" && /May I start/.test(d.text)))
+})
+
+test("a message to a declared CLI identity waits in its inbox; the plugin does not try to steer a session that is not one", async () => {
+  const fx = await team()
+  fx.rt.ledger.appendMany([
+    { type: "agent.seen", actor: { session: "cli:boss", name: "boss", role: "other" }, payload: { sessionID: "cli:boss", role: "other", agent: "other", directory: "/repo", status: "busy", kind: "cli" } },
+    { type: "agent.named", actor: { session: "cli:boss", name: "boss", role: "other" }, payload: { sessionID: "cli:boss", name: "boss" } },
+  ])
+  await fx.call("ses_co", "ask", { to: "boss", text: "Do you approve?" })
+  assert.equal(fx.delivered.filter((d) => d.sessionID === "cli:boss").length, 0)
+  assert.equal(fx.rt.ledger.events({ type: "message.delivery_failed" }).length, 0)
+  assert.equal(fx.rt.ledger.pendingCount(["cli:boss"]), 1)
+})
+
+test("a coordinator can defer a whole batch: every call succeeds and the product manager hears about each one", async () => {
+  const fx = await team()
+  const ids: string[] = []
+  for (let n = 0; n < 11; n++) ids.push(itemIdFrom(await fx.call("ses_pm", "propose", { ...proposal, title: `Item ${n}`, scopeFiles: [`src/p${n}/**`] })))
+  for (const id of ids) await fx.call("ses_co", "defer", { item: id, reason: `wait for the recount of ${id}` })
+  assert.equal(fx.rt.ledger.items((i) => i.state === "deferred").length, 11)
+  assert.equal(fx.rt.ledger.events({ type: "tool.refused" }).length, 0, "no call came back red")
+  const told = fx.delivered.filter((d) => d.sessionID === "ses_pm" && /ANSWER W[0-9a-z]+: DEFERRED/.test(d.text)).length
+  assert.equal(told, 11, "the product manager was told eleven times")
+})
+
+test("a tool notification that is too long is cut, not refused after the change was recorded", async () => {
+  const fx = await team()
+  const long = "x".repeat(9000)
+  const id = itemIdFrom(await fx.call("ses_pm", "propose", { ...proposal, why: long }))
+  assert.equal(fx.rt.ledger.item(id)?.state, "proposed")
+  const sent = fx.rt.ledger.messages({ toId: "ses_co" }).find((m) => m.item === id)
+  assert.ok(sent && sent.text.length <= 8000 && /cut at 8000/.test(sent.text))
+})
+
+test("free text between agents still meets the burst and duplicate gates", async () => {
+  const fx = await team()
+  const n = names(fx)
+  for (let i = 0; i < 6; i++) await fx.call("ses_ana", "ask", { to: n.bru, text: `Question number ${i}` })
+  assert.match(await fx.callFail("ses_ana", "ask", { to: n.bru, text: "One more" }), /Too many messages/)
+  const fx2 = await team()
+  await fx2.call("ses_ana", "ask", { to: names(fx2).bru, text: "Same words" })
+  assert.match(await fx2.callFail("ses_ana", "ask", { to: names(fx2).bru, text: "Same words" }), /just sent/)
 })

@@ -10,13 +10,20 @@ export const profileSchema = z.object({
     "product-manager": roleNames.default(["product-manager", "pm"]),
     engineer: roleNames.default(["engineer"]),
   }).default({ coordinator: ["coordinator"], "product-manager": ["product-manager", "pm"], engineer: ["engineer"] }),
+  /** Names a CLI or Claude Code identity may declare for a role (`coordination call --as <name>`). Any other name is `other`. */
+  cli: z.object({
+    coordinator: roleNames.default([]),
+    "product-manager": roleNames.default([]),
+    engineer: roleNames.default([]),
+  }).default({ coordinator: [], "product-manager": [], engineer: [] }),
   blockMinutes: z.number().int().min(1).default(60),
   fronts: z.array(z.object({ id: z.string(), title: z.string() })).default([]),
   github: z.object({
     repo: z.string().optional(),
+    baseBranch: z.string().min(1).default("main"),
     syncMinutes: z.number().int().min(1).default(3),
     agentLine: z.boolean().default(false),
-  }).default({ syncMinutes: 3, agentLine: false }),
+  }).default({ baseBranch: "main", syncMinutes: 3, agentLine: false }),
   prompt: z.object({ rules: z.array(z.string()).default([]) }).default({ rules: [] }),
   render: z.object({
     active: z.string().default("docs/coordination/ACTIVE.md"),
@@ -40,6 +47,15 @@ export const profileSchema = z.object({
 export type Profile = z.infer<typeof profileSchema>
 
 export const PROFILE_FILE = ".opencode/coordination.json"
+
+/** The role the profile grants to a declared (CLI or Claude Code) identity; `other` when the name is not listed. */
+export function declaredRole(profile: Profile, name: string): "coordinator" | "product-manager" | "engineer" | "other" {
+  const n = name.trim().toLowerCase()
+  for (const role of ["coordinator", "product-manager", "engineer"] as const) {
+    if (profile.cli[role].some((x) => x.toLowerCase() === n)) return role
+  }
+  return "other"
+}
 
 export function defaultProfile(): Profile {
   return profileSchema.parse({})

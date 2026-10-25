@@ -3,6 +3,7 @@ import type { Profile } from "./config/profile.ts"
 import type { Actor, AgentDoc, MessageDoc, MessageKind, Party, Role } from "./domain/types.ts"
 import { roleOf, type TitleModel } from "./domain/roles.ts"
 import { NAME_POOL } from "./domain/names.ts"
+import { SYSTEM_ACTOR } from "./domain/system.ts"
 
 /** What the plugin needs from the host session API. Implemented by src/host/opencode.ts, faked in tests. */
 export interface HostControl {
@@ -89,13 +90,24 @@ export interface Registration {
   kind?: "opencode" | "claude" | "cli"
   role?: Role
   status?: "busy" | "idle"
+  /** The parent session of a subagent. A child session never holds a role, whatever agent it runs. */
+  parent?: string
 }
 
-/** Records that a session exists and gives it a stable human name the first time. Returns the agent as projected. */
+/**
+ * Records that a session exists and gives it a stable human name the first time. Returns the agent as projected.
+ * The role is bound to the agent the session started with: a later agent switch does not change it (the attempt is
+ * recorded as agent.role_denied), and a subagent is always `other`.
+ */
 export function registerSession(rt: Runtime, input: Registration): AgentDoc {
-  const role = input.role ?? roleOf(input.agent, rt.profile.roles)
   const existing = rt.ledger.agent(input.sessionID)
+  const offered = input.parent ? "other" : input.role ?? roleOf(input.agent, rt.profile.roles)
+  const pinned = existing && existing.role !== "other" && offered !== existing.role
+  const role = pinned ? existing.role : offered
   const actor: Actor = { session: input.sessionID, name: existing?.name ?? input.sessionID, role }
+  if (pinned && existing.agent !== input.agent) {
+    rt.ledger.append({ type: "agent.role_denied", actor, payload: { sessionID: input.sessionID, agent: input.agent, offered, kept: existing.role } })
+  }
   const model = input.model?.id ? (input.model.variant ? `${input.model.id}#${input.model.variant}` : input.model.id) : undefined
   const status = input.status ?? "busy"
   const events: Array<{ type: string; payload: Record<string, unknown> }> = [{
@@ -105,14 +117,15 @@ export function registerSession(rt: Runtime, input: Registration): AgentDoc {
   const needsName = !existing || existing.name === existing.sessionID || existing.status === "gone"
   // A session that says the same thing within a minute adds nothing to the ledger: a turn is not an event.
   if (existing && !needsName && existing.role === role && existing.agent === input.agent && existing.directory === input.directory && existing.model === model && existing.status === status && rt.now().getTime() - Date.parse(existing.seenAt) < 60_000) return existing
-  if (needsName && role !== "other") events.push({ type: "agent.named", payload: { sessionID: input.sessionID, name: claimName(rt, input.sessionID) } })
+  if (needsName && role !== "other") events.push({ type: "agent.named", payload: { sessionID: input.sessionID, name: claimName(rt, input.sessionID, existing?.name) } })
   rt.ledger.appendMany(events.map((event) => ({ ...event, actor })))
   return rt.ledger.agent(input.sessionID) as AgentDoc
 }
 
 // Pool names are claimed by role sessions only. Subagents and helper sessions keep their session id as name and never
-// use up the pool. A name whose session has been gone longer than the profile says goes back to the pool.
-function claimName(rt: Runtime, sessionID: string): string {
+// use up the pool. A name whose session has been gone longer than the profile says goes back to the pool. A session
+// that comes back keeps its own name while nobody else holds it.
+function claimName(rt: Runtime, sessionID: string, former?: string): string {
   const cutoff = rt.now().getTime() - rt.profile.names.releaseAfterHours * 3_600_000
   const held = new Set<string>()
   for (const agent of rt.ledger.agents()) {
@@ -120,6 +133,8 @@ function claimName(rt: Runtime, sessionID: string): string {
     const released = agent.status === "gone" && Date.parse(agent.seenAt) < cutoff
     if (!released) held.add(agent.name.replace(/ \(retired\)$/, ""))
   }
+  const own = former?.replace(/ \(retired\)$/, "")
+  if (own && own !== sessionID && !held.has(own)) return own
   const free = NAME_POOL.find((name) => !held.has(name))
   if (free) return free
   let n = held.size + 1
@@ -134,11 +149,14 @@ export function actorFor(rt: Runtime, sessionID: string, fallbackAgent = ""): Ac
 
 export type Target = { kind: "agent"; agent: AgentDoc } | { kind: "claude"; peer: ClaudePeer } | { kind: "role"; role: Role }
 
-const ROLE_WORDS: Record<string, Role> = {
-  coordinator: "coordinator",
-  "product-manager": "product-manager",
-  pm: "product-manager",
-  engineer: "engineer",
+/** The words that name a role: the canonical names, pm, and the profile's agent aliases. */
+function roleWord(rt: Runtime, word: string): Role | undefined {
+  const w = word.toLowerCase()
+  if (w === "pm") return "product-manager"
+  for (const role of ["coordinator", "product-manager", "engineer"] as const) {
+    if (w === role || rt.profile.roles[role].some((alias) => alias.toLowerCase() === w)) return role
+  }
+  return undefined
 }
 
 /** Finds who a name means: a role word, an agent in this ledger, or a Claude Code peer. Ambiguity is an error. */
@@ -147,8 +165,8 @@ export async function resolveTarget(rt: Runtime, query: string, self?: string): 
   const prefixed = /^(opencode|claude|role):(.*)$/i.exec(q)
   const scope = prefixed?.[1]?.toLowerCase()
   const name = (prefixed?.[2] ?? q).trim()
-  if (scope === "role" || (!scope && ROLE_WORDS[name.toLowerCase()] && rt.ledger.findAgents(name).length === 0)) {
-    const role = ROLE_WORDS[name.toLowerCase()]
+  if (scope === "role" || (!scope && roleWord(rt, name) && rt.ledger.findAgents(name).length === 0)) {
+    const role = roleWord(rt, name)
     if (!role) fail(`Unknown role ${JSON.stringify(name)}.`)
     return { kind: "role", role }
   }
@@ -177,6 +195,12 @@ export interface PostInput {
   needsAnswer?: boolean
   transport?: MessageDoc["transport"]
   inReplyTo?: string
+  /**
+   * Free text written by an agent (ask, answer). Only free text meets the duplicate and burst gates and the length
+   * limit. A message a tool composes after it recorded a change is never refused: that would leave the change made,
+   * the recipient uninformed and the caller told it failed.
+   */
+  free?: boolean
   actor: Actor
 }
 
@@ -185,11 +209,16 @@ export const MAX_TEXT = 8000
 /** Records a message and returns it. Delivery happens when the recipient pulls, or right away for a Claude peer. */
 export function post(rt: Runtime, input: PostInput): MessageDoc {
   if (!input.text.trim()) fail("A message needs text.")
-  if (input.text.length > MAX_TEXT) fail(`The message is ${input.text.length} characters; the limit is ${MAX_TEXT}. Attach details with coordination_note and send the id.`)
-  if (input.from.kind !== "system" && input.kind !== "broadcast") {
+  let text = input.text
+  if (text.length > MAX_TEXT) {
+    if (input.free) fail(`The message is ${text.length} characters; the limit is ${MAX_TEXT}. Attach details with coordination_note and send the id.`)
+    text = `${text.slice(0, MAX_TEXT - 80)}\n[cut at ${MAX_TEXT} characters; coordination_item has the rest]`
+  }
+  // The gates are for agents writing free text. Tool notifications and the plugin's own follow-ups never meet them.
+  if (input.free && input.from.kind !== "system" && input.actor.session !== SYSTEM_ACTOR.session && input.kind !== "broadcast") {
     const now = rt.now().getTime()
     const recent = rt.ledger.messagesBetween(input.from.id, input.to.id, new Date(now - 60_000).toISOString())
-    if (recent.some((m) => m.text === input.text && now - Date.parse(m.at) < 20_000)) fail("The same message was just sent to that peer. It was not sent again.")
+    if (recent.some((m) => m.text === text && now - Date.parse(m.at) < 20_000)) fail("The same message was just sent to that peer. It was not sent again.")
     if (recent.length >= rt.profile.limits.burstPerMinute) fail("Too many messages to that peer in the last minute. Wait, or fold them into one later message.")
   }
   const id = rt.ledger.newMessageId()
@@ -199,7 +228,7 @@ export function post(rt: Runtime, input: PostInput): MessageDoc {
     actor: input.actor,
     subject: input.item,
     payload: {
-      id, kind: input.kind, from: input.from, to: input.to, item: input.item, text: input.text, needsAnswerBy,
+      id, kind: input.kind, from: input.from, to: input.to, item: input.item, text, needsAnswerBy,
       transport: input.transport ?? (input.to.kind === "claude" ? "claude" : input.to.kind === "cli" ? "cli" : "opencode"), inReplyTo: input.inReplyTo,
     },
     refs: [id.slice(0, 8), ...(input.item ? [input.item] : [])],

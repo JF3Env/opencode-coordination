@@ -4,6 +4,10 @@
     "product-manager": ["product-manager", "pm"],
     "engineer": ["engineer"]
   },
+  "cli": {
+    "coordinator": ["claude-coordinator"],
+    "product-manager": ["owner"]
+  },
   "blockMinutes": 60,
   "fronts": [
     { "id": "G1", "title": "A simulated product as close as possible to a real one" },

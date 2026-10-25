@@ -21,22 +21,35 @@ interface GhPr {
 
 const FIELDS = "number,isDraft,headRefName,headRefOid,mergedAt,mergeCommit,closedAt,body,comments"
 
-export function makeGitHub(repo: string, gh: Gh): GitHubLink & { list(): Promise<GhPr[]>; containsMain(sha: string): Promise<boolean> } {
+/** The GitHub link over `gh`. `base` is the branch a pull request must contain and records must be on (default main). */
+export function makeGitHub(repo: string, gh: Gh, base = "main"): GitHubLink & { list(): Promise<GhPr[]>; containsMain(sha: string): Promise<boolean> } {
   const containsMain = async (sha: string): Promise<boolean> => {
     try {
-      const status = (await gh(["api", `repos/${repo}/compare/main...${sha}`, "--jq", ".status"])).trim()
+      const status = (await gh(["api", `repos/${repo}/compare/${base}...${sha}`, "--jq", ".status"])).trim()
       return status === "ahead" || status === "identical"
     } catch {
       return false
     }
   }
   const list = async (): Promise<GhPr[]> => JSON.parse(await gh(["pr", "list", "--repo", repo, "--state", "all", "--limit", "100", "--json", FIELDS])) as GhPr[]
+  // One pull request, by number or by head branch, without depending on the hundred most recent ones.
+  const find = async (branch: string | undefined, pr: number | undefined): Promise<GhPr | undefined> => {
+    if (pr !== undefined) {
+      try {
+        return JSON.parse(await gh(["pr", "view", String(pr), "--repo", repo, "--json", FIELDS])) as GhPr
+      } catch {
+        return undefined
+      }
+    }
+    if (!branch) return undefined
+    const hits = JSON.parse(await gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--limit", "10", "--json", FIELDS])) as GhPr[]
+    return hits.find((p) => !p.closedAt) ?? hits[0]
+  }
   return {
     list,
     containsMain,
     async prForItem(branch, pr) {
-      const all = await list()
-      const hit = all.find((p) => (pr !== undefined && p.number === pr) || (branch && p.headRefName === branch))
+      const hit = await find(branch, pr)
       if (!hit) return undefined
       const info: PrInfo = { number: hit.number, isDraft: hit.isDraft, head: hit.headRefOid, containsMain: await containsMain(hit.headRefOid) }
       if (hit.mergedAt) info.mergedAt = hit.mergedAt
@@ -45,7 +58,7 @@ export function makeGitHub(repo: string, gh: Gh): GitHubLink & { list(): Promise
     },
     async recordOnMain(path) {
       try {
-        await gh(["api", `repos/${repo}/contents/${encodeURIComponent(path).replaceAll("%2F", "/")}?ref=main`, "--jq", ".sha"])
+        await gh(["api", `repos/${repo}/contents/${encodeURIComponent(path).replaceAll("%2F", "/")}?ref=${encodeURIComponent(base)}`, "--jq", ".sha"])
         return true
       } catch {
         return false
@@ -94,7 +107,8 @@ export async function syncPullRequests(rt: Runtime, link: ReturnType<typeof make
     }
     if (!pr.mergedAt && !pr.closedAt && ["in_progress", "in_review"].includes(item.state)) await checkDescription(rt, item, pr, agentLine, out)
     if (pr.mergedAt && !["merged", "measured", "validated"].includes(item.state)) {
-      if (item.state === "in_progress" || item.state === "in_review" || item.state === "blocked") {
+      // A merge on GitHub is a fact: it is recorded whether or not the engineer called claim or ready first.
+      if (["assigned", "in_progress", "in_review", "blocked"].includes(item.state)) {
         if (item.state !== "in_review") rt.ledger.append({ type: "item.in_review", actor: SYSTEM_ACTOR, subject: item.id, payload: { id: item.id, pr: pr.number, viaSync: true } })
         rt.ledger.append({ type: "item.merged", actor: SYSTEM_ACTOR, subject: item.id, payload: { id: item.id, commit: pr.mergeCommit?.oid ?? pr.headRefOid } })
         await announceMain(rt, item, pr)
@@ -110,9 +124,18 @@ export async function syncPullRequests(rt: Runtime, link: ReturnType<typeof make
       rt.ledger.append({ type: "item.returned", actor: SYSTEM_ACTOR, subject: item.id, payload: { id: item.id, viaSync: true } })
     }
     const steward = (pr.comments ?? []).filter((c) => /^STEWARD:/.test(c.body)).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0]
-    if (steward && steward.createdAt > (rt.ledger.item(item.id)?.verdict?.at ?? "")) {
+    // A comment is read once: it is newer than the comment the last verdict came from, or than a verdict given by tool.
+    const last = rt.ledger.item(item.id)?.verdict
+    if (steward && steward.createdAt > (last?.commentAt ?? last?.at ?? "")) {
       const approved = /^STEWARD: APPROVED/.test(steward.body)
-      rt.ledger.append({ type: "item.verdict", actor: SYSTEM_ACTOR, subject: item.id, payload: { id: item.id, verdict: approved ? "approved" : "changes", findings: steward.body, fromComment: true } })
+      rt.ledger.append({ type: "item.verdict", actor: SYSTEM_ACTOR, subject: item.id, payload: { id: item.id, verdict: approved ? "approved" : "changes", findings: steward.body, fromComment: true, commentAt: steward.createdAt } })
+      // Changes requested send the item back to work, as coordination_verdict does; the engineer is told.
+      const current = rt.ledger.item(item.id)
+      if (!approved && current?.state === "in_review") {
+        rt.ledger.append({ type: "item.returned", actor: SYSTEM_ACTOR, subject: item.id, payload: { id: item.id, viaSync: true } })
+        const who = current.assignee ? rt.ledger.agent(current.assignee) : undefined
+        if (who && who.status !== "gone") await dispatch(rt, post(rt, { from: { kind: "system", id: "system", name: "coordination" }, to: partyOf(who), kind: "note", text: `STEWARD: CHANGES REQUESTED on ${item.id} (PR #${pr.number}). Answer the findings with commits and a comment, then call coordination_ready again.\n${steward.body}`, item: item.id, actor: SYSTEM_ACTOR, transport: "system" }))
+      }
       out.verdicts.push(item.id)
     }
   }

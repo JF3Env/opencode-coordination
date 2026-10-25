@@ -26,6 +26,7 @@ interface HostSession {
   title?: string
   agent?: string
   model?: TitleModel
+  parentID?: string
   location?: { directory?: string }
   permissions?: Array<{ action: string; resource: string; effect: "allow" | "deny" | "ask" }>
 }
@@ -119,7 +120,7 @@ export function createPlugin(options: PluginOptions = {}) {
 
       const rt: Runtime = { ledger, profile, now: () => ledger.now(), host }
       rt.wake = (sessionID) => void pull(rt, sessionID)
-      const github = profile.github.repo ? makeGitHub(profile.github.repo, ghRunner) : undefined
+      const github = profile.github.repo ? makeGitHub(profile.github.repo, ghRunner, profile.github.baseBranch) : undefined
       if (github) rt.github = github
 
       let bridge: Bridge | undefined
@@ -144,8 +145,8 @@ export function createPlugin(options: PluginOptions = {}) {
 
       // ---- sessions: registration, title, prompt -------------------------------------------------------------------
       const titleJobs = new Map<string, Promise<void>>()
-      const refresh = async (sessionID: string, agent: string, directory: string, model?: TitleModel): Promise<ReturnType<typeof registerSession>> => {
-        const me = registerSession(rt, { sessionID, agent, directory, model })
+      const refresh = async (sessionID: string, agent: string, directory: string, model?: TitleModel, parent?: string): Promise<ReturnType<typeof registerSession>> => {
+        const me = registerSession(rt, { sessionID, agent, directory, model, parent })
         const wanted = roleSessionTitle(me.role, me.name, model)
         if (wanted) {
           try {
@@ -162,7 +163,7 @@ export function createPlugin(options: PluginOptions = {}) {
         const job = (async () => {
           try {
             const info = sessionView(await sessions.get({ sessionID }))
-            if (info.agent && roleOf(info.agent, profile.roles) !== "other") await refresh(sessionID, info.agent, info.location?.directory || ctx.location.directory, info.model)
+            if (info.agent && !info.parentID && roleOf(info.agent, profile.roles) !== "other") await refresh(sessionID, info.agent, info.location?.directory || ctx.location.directory, info.model, info.parentID)
           } catch {
             // a missing session is not a coordination failure
           }
@@ -173,9 +174,10 @@ export function createPlugin(options: PluginOptions = {}) {
       const active = new Set<string>()
       await sessions.hook("context", async (event) => {
         active.add(event.sessionID)
-        const directory = sessionView(await sessions.get({ sessionID: event.sessionID }).catch(() => undefined)).location?.directory || ctx.location.directory
+        const info = sessionView(await sessions.get({ sessionID: event.sessionID }).catch(() => undefined))
+        const directory = info.location?.directory || ctx.location.directory
         if ((await scopeOf(directory)) !== scope) return
-        await refresh(event.sessionID, event.agent, directory, event.model)
+        await refresh(event.sessionID, event.agent, directory, event.model, info.parentID)
         const text = buildPrompt(rt, event.sessionID, event.model)
         if (text) event.system.push({ type: "text", text })
         void pull(rt, event.sessionID)
@@ -197,14 +199,14 @@ export function createPlugin(options: PluginOptions = {}) {
             input: z.toJSONSchema(spec.input, { io: "input" }),
             options: { namespace: "coordination", permission: "coordination", codemode: true },
             async execute(input: unknown, context: { sessionID: string; agent: string }) {
-              const role = roleOf(context.agent, profile.roles)
               const known = rt.ledger.agent(context.sessionID)
-              if (!known || known.role !== role) {
+              if (!known || known.agent !== context.agent) {
                 const info = sessionView(await sessions.get({ sessionID: context.sessionID }).catch(() => undefined))
-                await refresh(context.sessionID, context.agent, info.location?.directory || ctx.location.directory, info.model)
+                await refresh(context.sessionID, context.agent, info.location?.directory || ctx.location.directory, info.model, info.parentID)
               }
+              // The role is the one the ledger bound to this session, never the agent id of the moment.
               const me = rt.ledger.agent(context.sessionID)
-              const actor: Actor = { session: context.sessionID, name: me?.name ?? context.sessionID, role }
+              const actor: Actor = { session: context.sessionID, name: me?.name ?? context.sessionID, role: me?.role ?? "other" }
               try {
                 return { content: await callTool(rt, spec, actor, input) }
               } catch (error) {

@@ -73,7 +73,8 @@ export interface Item {
   createdAt: string
   proposedBy?: string
   notes: Array<{ at: string; by: string; text: string }>
-  verdict?: { at: string; verdict: "approved" | "changes"; findings: string }
+  /** commentAt is the GitHub time of the steward comment the verdict was read from, when it came from one. */
+  verdict?: { at: string; verdict: "approved" | "changes"; findings: string; commentAt?: string }
 }
 
 export interface AgentDoc {

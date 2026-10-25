@@ -124,7 +124,7 @@ function recentEvent(rt: Runtime, subject: string, type: string, sinceMs: number
 }
 
 async function resend(rt: Runtime, m: MessageDoc): Promise<void> {
-  const copy = post(rt, { from: m.from, to: m.to, kind: m.kind, text: `(resent) ${m.text}`, item: m.item, needsAnswer: false, actor: SYSTEM_ACTOR, transport: m.transport, inReplyTo: m.id })
+  const copy = post(rt, { from: m.from, to: m.to, kind: m.kind, text: `(resent; this repeats record ${m.short}, which still waits for your coordination_answer) ${m.text}`, item: m.item, needsAnswer: false, actor: SYSTEM_ACTOR, transport: m.transport, inReplyTo: m.id })
   await dispatch(rt, copy)
   const sender = rt.ledger.agent(m.from.id)
   await note(rt, sender ? partyOf(sender) : undefined, `No answer yet to ${m.short} (${m.to.name}); it was sent again.`, m.item)
