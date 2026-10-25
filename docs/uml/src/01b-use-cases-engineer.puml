@@ -1,0 +1,83 @@
+@startuml 01b-use-cases-engineer
+!include style.iuml
+title Use cases of the engineer
+left to right direction
+
+actor "Engineer\n(agent: engineer)" as Eng
+actor "Coordinator" as Coord
+actor "Product manager" as PM
+actor "GitHub" as GH <<external system>>
+
+rectangle "opencode-coordination" {
+  package "Own work" {
+    usecase "Declare availability" as UC_available
+    usecase "Claim branch, worktree, files" as UC_claim
+    usecase "Send a scope note\n(numbered questions)" as UC_scope
+    usecase "Post a one-line progress" as UC_progress
+    usecase "Mark ready for review" as UC_ready
+    usecase "Declare a block" as UC_blocked
+    usecase "Record a defect found\noutside scope" as UC_defect
+    usecase "Hand an item over" as UC_handover
+    usecase "Report a bet result" as UC_result
+  }
+  package "Communication" {
+    usecase "Ask a question" as UC_ask
+    usecase "Answer a question" as UC_answer
+    usecase "Attach a note to an item" as UC_note
+    usecase "Look up a record by id" as UC_record
+    usecase "Query the history" as UC_history
+    usecase "Relay an owner order" as UC_owner
+    usecase "Raise a safety matter" as UC_safety
+    usecase "Report an incident\n(e.g. an instruction with no record)" as UC_incident
+    usecase "See own state (whoami)" as UC_whoami
+    usecase "Read the board / own item" as UC_board
+  }
+  usecase "Check file-scope collision" as UC_collision
+  usecase "Confirm PR is ready\nand contains main" as UC_sync
+  usecase "Append an event" as UC_event
+}
+
+Eng --> UC_available
+Eng --> UC_claim
+Eng --> UC_scope
+Eng --> UC_progress
+Eng --> UC_ready
+Eng --> UC_blocked
+Eng --> UC_defect
+Eng --> UC_handover
+Eng --> UC_result
+Eng --> UC_ask
+Eng --> UC_answer
+Eng --> UC_note
+Eng --> UC_record
+Eng --> UC_history
+Eng --> UC_owner
+Eng --> UC_safety
+Eng --> UC_incident
+Eng --> UC_whoami
+Eng --> UC_board
+
+UC_available ..> Coord : notifies
+UC_ready ..> Coord : notifies
+UC_handover ..> Coord : notifies
+UC_blocked ..> Coord : visible in queue
+UC_scope ..> Coord : one ask per question
+UC_result ..> PM : notifies, copies coordinator
+UC_owner ..> Coord : notifies, copies PM
+UC_incident ..> PM : notifies, copies coordinator
+UC_safety ..> Coord : at once, marked for the owner
+
+UC_claim ..> UC_collision : <<include>>
+UC_ready ..> UC_sync : <<include>>
+UC_sync ..> GH : gh pr view,\ngit merge-base
+UC_claim ..> UC_event : <<include>>
+UC_ready ..> UC_event : <<include>>
+UC_result ..> UC_event : <<include>>
+UC_ask ..> UC_event : <<include>>
+
+note right of UC_whoami
+  The engineer never assigns, proposes,
+  clears its session or edits a page:
+  those tools are not published to its role.
+end note
+@enduml

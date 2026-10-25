@@ -1,0 +1,46 @@
+@startuml 09-seq-ask-reminder-escalation
+!include style.iuml
+title A question with a deadline: reminder and escalation by the clock
+
+actor "Engineer (Ana)" as Eng
+participant "coordination_ask" as TAsk
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "Coordinator" as Coord
+participant "Clock" as Clock
+actor "Product manager" as PM
+participant "coordination_answer" as TAnswer
+
+Eng -> TAsk : to coordinator, text, item W…
+TAsk -> Ledger : append message.sent {kind ask,\nneedsAnswerBy = now + 1 block}
+TAsk -> Deliver : enqueue
+Deliver -> Coord : steer: QUESTION from Ana (record 8f3a…)
+TAsk --> Eng : "Asked; record 8f3a…; the plugin follows up"
+
+== 1 block later, no answer ==
+Clock -> Ledger : messages with needsAnswerBy < now and answeredBy = null
+Clock -> Ledger : append clock.reminder {message 8f3a…}
+Clock -> Deliver : enqueue(same text, "(resent)", to coordinator)
+Deliver -> Coord : steer: QUESTION (resent) 8f3a…
+Clock -> Deliver : enqueue(note to Ana: "no answer yet; reminded")
+
+== 2 blocks later, still no answer ==
+Clock -> Ledger : append clock.escalated {message 8f3a…, to product-manager}
+Clock -> Deliver : enqueue(copy to product manager)
+Deliver -> PM : steer: ESCALATED question 8f3a… from Ana to coordinator
+note right of PM
+  A PM→coordinator message escalates into
+  the owner bundle instead (see 17).
+end note
+
+== the answer ==
+Coord -> TAnswer : message 8f3a…, text
+TAnswer -> Ledger : append message.answered
+TAnswer -> Deliver : enqueue(answer → Ana, item W…)
+Deliver -> Eng : steer: ANSWER to 8f3a… (record 9c1d…)
+TAnswer --> Coord : "Answered"
+note over Ledger
+  Nobody counted blocks, resent by hand,
+  or copied anyone: four events did it.
+end note
+@enduml

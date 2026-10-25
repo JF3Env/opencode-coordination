@@ -1,0 +1,64 @@
+@startuml 08-seq-ready-review-merge
+!include style.iuml
+title Ready, review verdict, merge, result
+
+actor "Engineer" as Eng
+participant "coordination_ready" as TReady
+participant "GitHubSync" as Sync
+participant "gh CLI" as Gh
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "Coordinator" as Coord
+participant "coordination_verdict" as TVerdict
+participant "coordination_result" as TResult
+actor "Product manager" as PM
+
+Eng -> Eng : gh pr ready N (outside the plugin)
+Eng -> TReady : item, checks{…}, shared files,\nnumbers, result or "measured after merge by", next
+TReady -> Sync : sync(item.pr)
+Sync -> Gh : gh pr view N ~--json isDraft,headRefOid,baseRefName
+Gh --> Sync : isDraft=false, head=abc123
+Sync -> Gh : git merge-base ~--is-ancestor origin/main abc123
+Gh --> Sync : contains main = true
+Sync -> Ledger : append pr.synced {ready, head, containsMain}
+alt PR still draft, or does not contain main, or a hold covers it
+  TReady --> Eng : refusal naming the condition (event item.ready_refused)
+else
+  TReady -> Ledger : append item.ready {checks, sharedFiles, numbers, next}\n(stage tested)
+  TReady -> Deliver : enqueue(rendered READY → coordinator)
+  Deliver -> Coord : steer: READY #N abc123 (record id)
+  TReady --> Eng : "In review"
+end
+
+Coord -> Coord : review per the role file;\nruns the checks on the merged tree
+Coord -> TVerdict : item, approved | changes, findings
+TVerdict -> Ledger : append item.verdict
+TVerdict --> Coord : text ready for gh pr comment:\n"STEWARD: APPROVED …"
+Coord -> Gh : gh pr comment N ~--body "STEWARD: …"
+alt changes requested
+  Coord -> Gh : gh pr ready N ~--undo
+  TVerdict -> Deliver : enqueue(verdict → engineer)
+  Deliver -> Eng : steer: CHANGES REQUESTED (record id)
+  note right of Ledger : item back to in_progress on next sync
+else approved
+  Coord -> Gh : gh pr merge N ~--merge ~--match-head-commit abc123
+end
+
+== clock tick (every 3 min) ==
+Sync -> Gh : gh pr list ~--json number,isDraft,mergedAt,headRefOid,updatedAt
+Gh --> Sync : #N mergedAt=…, mergeCommit=def456
+Sync -> Ledger : append pr.merged, item.merged {commit def456}\n(stage implemented)
+Sync -> Deliver : broadcast(scope: "main moved: #N, files …")\nto authors of other open items and standing owners
+Deliver -> Eng : steer: main moved
+Deliver -> PM : steer: main moved
+
+== result of the bet ==
+Eng -> TResult : item, before, after, record path, verdict
+TResult -> Ledger : append measure.recorded, item.measured
+TResult -> Deliver : enqueue(RESULT → product manager, copy coordinator)
+Deliver -> PM : steer: RESULT W… met (record id)
+note over Ledger
+  Board, scorecard and STATE are recomputed
+  from item.merged and measure.recorded.
+end note
+@enduml

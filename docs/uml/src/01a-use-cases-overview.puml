@@ -1,0 +1,47 @@
+@startuml 01a-use-cases-overview
+!include style.iuml
+title Use cases, overview: actors and the five packages
+left to right direction
+
+actor "Owner" as Owner
+actor "Product manager" as PM
+actor "Coordinator" as Coord
+actor "Engineer" as Eng
+actor "Claude Code session" as CC
+actor "GitHub (gh CLI)" as GH <<external system>>
+actor "Clock (timer)" as Clock <<internal>>
+
+rectangle "opencode-coordination" {
+  usecase "Communication\n(ask, answer, note, record,\nhistory, owner order, safety, incident)" as P1
+  usecase "Work control\n(propose, accept, breakdown, assign,\nclaim, progress, ready, verdict, hold)" as P2
+  usecase "Progress control\n(decide, prioritize, measure, validate,\nboard, state digest, bundle, render)" as P3
+  usecase "History\n(append event, export, import, rebuild)" as P4
+  usecase "Automations\n(PR sync, reminders, escalation, stalls,\nidle, gone, prompt, title, names)" as P5
+}
+
+PM --> P1
+Coord --> P1
+Eng --> P1
+CC --> P1
+Coord --> P2
+Eng --> P2
+PM --> P2 : propose only
+PM --> P3
+Coord --> P3 : answer decisions,\nstate digest, board
+Eng --> P3 : result only
+Owner <-- P3 : bundle, pages
+Owner --> P1 : orders any session
+GH --> P5
+Clock --> P5
+P1 ..> P4 : <<include>>
+P2 ..> P4 : <<include>>
+P3 ..> P4 : <<include>>
+P5 ..> P4 : <<include>>
+P5 ..> P1 : <<include>>\ndelivers reminders\nand digests
+P5 ..> P2 : <<include>>\nmoves items on\nmerge, gone, unclaimed
+
+note bottom of P4
+  One actor per event, written by the plugin
+  from the authenticated session. Nothing is pruned.
+end note
+@enduml

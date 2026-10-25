@@ -1,0 +1,46 @@
+@startuml 13-act-clock-tick
+!include style.iuml
+title Clock tick (every minute; block = profile.blockMinutes, default 60)
+
+start
+:now = current time;
+partition "Unanswered messages" {
+  :for each message with needsAnswerBy < now\nand answeredBy = null;
+  if (reminded = 0?) then (yes)
+    :re-deliver with "(resent)";
+    :append clock.reminder; reminded = 1;
+  elseif (now > needsAnswerBy + 1 block and not escalated?) then (yes)
+    :copy to the escalation target of the sender's role;
+    :append clock.escalated;
+  endif
+}
+partition "Items" {
+  :for each item in state assigned\nwith no claim after 1 block;
+  :append clock.unclaimed; notify the coordinator;
+  :for each item in now-priority with\nno event for 2 blocks;
+  :append clock.stall; notify coordinator and product manager;
+  :for each item in_progress whose PR has no commit\nand no progress for 1 block;
+  :append clock.quiet; notify the engineer\n("post progress or push");
+}
+partition "Agents" {
+  :for each engineer idle with no current item for 1 block;
+  :append clock.idle; notify the coordinator\nwith the next ready item of the top front;
+  :for each agent with no signal for 30 min\nwhose session is not listed by the server;
+  :append agent.gone; items back to ready; notify the coordinator;
+  :names of agents gone for 24 h return to the pool;
+}
+partition "Periodic jobs" {
+  if (GitHub sync due (profile.github.syncMinutes)?) then (yes)
+    :GitHubSync.sync() (activity 14);
+  endif
+  if (block boundary reached?) then (yes)
+    :STATE digest → product manager;
+    :Renderer.render(); export snapshot.json;
+    :append view.rendered;
+  endif
+  if (ledger file above the archive limit?) then (yes)
+    :close as ledger-<date>.db; open a new one;
+  endif
+}
+stop
+@enduml

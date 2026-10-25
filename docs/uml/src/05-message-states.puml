@@ -1,0 +1,42 @@
+@startuml 05-message-states
+!include style.iuml
+title Message life cycle (delivery, deadline, escalation)
+
+[*] --> recorded : tool call, bridge frame\nor CLI (event message.sent)
+
+recorded --> queued : recipient is an OpenCode session
+recorded --> sent_to_claude : recipient is a Claude Code session\n(socket frame, auth token)
+sent_to_claude --> accepted : socket closed cleanly
+sent_to_claude --> uncertain : no close within 2 s
+sent_to_claude --> failed : connect error\n(event message.send_failed)
+accepted --> delivered : receipt peer_message_status=delivered
+uncertain --> delivered : receipt arrives later
+
+queued --> claiming : deliverer pull\n(30 s reservation)
+claiming --> delivered : session.synthetic(steer) ok\n(event message.delivered)
+claiming --> queued : synthetic failed\n(reservation released)
+
+state "awaiting answer" as waiting {
+  delivered --> reminded : clock: 1 block without answer\n(re-delivered "(resent)",\nevent clock.reminder)
+  reminded --> escalated : clock: 2 blocks without answer\n(copy to the escalation role,\nevent clock.escalated)
+}
+delivered --> answered : recipient: answer\n(event message.answered)
+reminded --> answered
+escalated --> answered
+delivered --> closed : needsAnswerBy is null\n(note, broadcast, rendered digest)
+answered --> [*]
+closed --> [*]
+failed --> [*]
+
+note right of waiting
+  Escalation targets by sender role:
+  engineer → coordinator: copy the product manager
+  product manager → coordinator: goes into the owner bundle
+  coordinator → engineer: item becomes a stall candidate
+end note
+note bottom of recorded
+  Every state change is an event with the
+  plugin as actor. The record id (8 chars)
+  is stable from "recorded" on and is never pruned.
+end note
+@enduml

@@ -1,0 +1,44 @@
+@startuml 18-seq-gone-handover-reassign
+!include style.iuml
+title A session leaves: handover, gone detection, reassignment
+
+actor "Engineer (Ana)" as Ana
+participant "coordination_handover" as THand
+participant "Clock" as Clock
+participant "OpenCode\nctx.session" as OC
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "Coordinator" as Coord
+participant "coordination_reassign" as TRe
+actor "Engineer (Bruno)" as Bruno
+
+== explicit handover ==
+Ana -> THand : item W…, leftToDo, data paths under outputs/
+THand -> Ledger : append item.handed_over {leftToDo, data}\nstate → ready, assignee cleared
+THand -> Deliver : enqueue(HANDOVER → coordinator)
+Deliver -> Coord : steer: HANDOVER W… from Ana (record id)
+THand --> Ana : "Handed over"
+
+== silent disappearance ==
+Clock -> OC : session.list() / last signal per agent
+Clock -> Ledger : agents with no signal for 30 min\nnot listed by the server
+Clock -> Ledger : append agent.gone {Ana}
+Clock -> Ledger : items of Ana in assigned/in_progress → ready\n(event item.orphaned, branch and PR kept)
+Clock -> Deliver : enqueue(note → coordinator: "Ana gone; W… orphaned,\nbranch feat/…, PR #N draft")
+Deliver -> Coord : steer
+
+== reassignment ==
+Coord -> TRe : item W…, engineer Bruno
+TRe -> TRe : checks of activity 12 (Bruno has no open item, no collision)
+TRe -> Ledger : append item.assigned {assignee Bruno, takesOverBranch}
+TRe -> Deliver : enqueue(ASSIGN → Bruno: "take over branch feat/…,\nsame PR #N, say so in a comment")
+Deliver -> Bruno : steer: ASSIGN W… (record id)
+alt Ana is still reachable
+  TRe -> Deliver : enqueue(note → Ana: "W… reassigned to Bruno; stop pushing")
+end
+TRe --> Coord : "Reassigned to Bruno"
+note over Ledger
+  Ana's name is released to the pool after 24 h gone.
+  Her events stay; `history ~--agent Ana` still answers.
+end note
+@enduml

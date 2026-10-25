@@ -1,0 +1,80 @@
+@startuml 01e-use-cases-system
+!include style.iuml
+title Use cases of the non-role actors: clock, GitHub, Claude Code sessions, owner
+left to right direction
+
+actor "Clock\n(internal timer)" as Clock <<internal>>
+actor "GitHub\n(gh CLI)" as GH <<external system>>
+actor "Claude Code session\n(bridge or CLI)" as CC
+actor "Owner" as Owner
+actor "Coordinator" as Coord
+actor "Product manager" as PM
+actor "Engineer" as Eng
+
+rectangle "opencode-coordination" {
+  package "Automations" {
+    usecase "Sync pull-request state\n(link, ready, merged, closed, verdict comment)" as UC_sync
+    usecase "Remind an unanswered message\n(1 block)" as UC_remind
+    usecase "Escalate\n(2 blocks)" as UC_escalate
+    usecase "Detect a stalled item" as UC_stall
+    usecase "Detect an unclaimed assignment" as UC_unclaimed
+    usecase "Detect an idle engineer" as UC_idle
+    usecase "Detect a gone session" as UC_gone
+    usecase "Generate the state digest" as UC_state
+    usecase "Render pages and export snapshot" as UC_render
+    usecase "Archive a large ledger" as UC_archive
+  }
+  package "Session services" {
+    usecase "Build the role system prompt" as UC_prompt
+    usecase "Keep the role session title" as UC_title
+    usecase "Claim a stable human name" as UC_name
+    usecase "Deliver a message (steer)" as UC_deliver
+  }
+  package "Bridge and CLI" {
+    usecase "Receive a socket frame\n(to: routing, receipt)" as UC_frame
+    usecase "Send a frame to a Claude peer" as UC_sendclaude
+    usecase "Run a CLI command\n(ask, board, record, history, render)" as UC_cli
+  }
+  package "History" {
+    usecase "Append an event" as UC_event
+    usecase "Import legacy agent-mail records" as UC_import
+    usecase "Rebuild projections" as UC_rebuild
+  }
+}
+
+Clock --> UC_sync
+Clock --> UC_remind
+Clock --> UC_escalate
+Clock --> UC_stall
+Clock --> UC_unclaimed
+Clock --> UC_idle
+Clock --> UC_gone
+Clock --> UC_state
+Clock --> UC_render
+Clock --> UC_archive
+GH --> UC_sync
+CC --> UC_frame
+CC --> UC_cli
+Owner --> UC_render : reads the output
+Owner --> UC_cli : may run read-only commands
+
+UC_sync ..> UC_event : <<include>>
+UC_remind ..> UC_deliver : <<include>>
+UC_escalate ..> UC_deliver : <<include>>
+UC_state ..> UC_deliver : <<include>>\nto the product manager
+UC_frame ..> UC_deliver : <<include>>
+UC_cli ..> UC_event : <<include>>
+UC_deliver ..> UC_event : <<include>>
+UC_prompt ..> UC_name : <<include>>
+UC_title ..> UC_name : <<include>>
+UC_import ..> UC_event : <<include>>
+UC_rebuild ..> UC_event : <<include>>
+
+UC_stall ..> Coord : notifies
+UC_stall ..> PM : notifies
+UC_unclaimed ..> Coord : notifies
+UC_idle ..> Coord : notifies with next ready item
+UC_gone ..> Coord : notifies; items back to ready
+UC_escalate ..> PM : copies (engineer → coordinator case)
+UC_sendclaude ..> Eng : any role may target\na Claude peer
+@enduml

@@ -1,0 +1,51 @@
+@startuml 17-seq-measure-render-report
+!include style.iuml
+title Measures, pages and the owner's report are projections
+
+actor "Product manager" as PM
+participant "coordination_measure" as TMeasure
+participant "coordination_validate" as TValidate
+participant "coordination_summary" as TSummary
+participant "coordination_bundle" as TBundle
+participant "Renderer" as Render
+database "Ledger" as Ledger
+participant "CLI / Clock" as Trigger
+collections "Project pages\nACTIVE.md, board, ROADMAP.md,\nSTATUS.md, snapshot.json" as Pages
+actor "Owner" as Owner
+
+PM -> TMeasure : name "G1.3a z0", value 3.55, unit "sigma",\nrecord docs/evidence/…/README.md, commit, sensitiveTo, blindTo
+TMeasure -> TMeasure : guard: record path is committed on main\n(git cat-file on origin/main)
+alt record missing on main
+  TMeasure --> PM : refusal "record not on main; recorded as a claim"\n(event measure.claimed)
+else
+  TMeasure -> Ledger : append measure.recorded
+  TMeasure --> PM : "Recorded; series: 3 points"
+end
+
+PM -> TValidate : item W…, reference "X31 capture, BIB-188 rule", record
+TValidate -> Ledger : append item.validated (stage validated)
+TValidate --> PM : "Validated 14 of 75"
+
+PM -> TSummary : front G1, "The simulated image now matches the real\ncapture in brightness; texture is next."
+TSummary -> TSummary : guard: no codes (regex: #\d+, D\d+, DEF-, BIB-, paths)
+TSummary -> Ledger : append view.summary {front G1}
+
+== render (clock at block boundary, or `coordination render`) ==
+Trigger -> Render : render(profile)
+Render -> Ledger : items, agents, measures, decisions,\nholds, summaries, stages with commits
+Render -> Pages : ACTIVE.md (claims), board (now/next/later),\nROADMAP.md (stage tables, one per front),\nSTATUS.md (plain words only), snapshot.json
+Render -> Ledger : append view.rendered {paths, hash}
+Trigger -> Render : check(profile)
+Render --> Trigger : diff empty | stale pages listed (exit 1)
+note right of Pages
+  Committed by whoever the project decides
+  (a build seat PR). A hand edit fails `render ~--check`.
+end note
+
+== owner bundle ==
+PM -> TBundle : (no input)
+TBundle -> Ledger : measures moved since last bundle, decisions\nwaiting for the owner with options, escalations,\nsafety matters
+TBundle --> PM : rendered OWNER BUNDLE in the owner's language
+PM -> Owner : the bundle, in the owner's session
+Owner -> Pages : reads STATUS.md / ROADMAP.md
+@enduml

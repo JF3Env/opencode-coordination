@@ -1,0 +1,55 @@
+@startuml 10-seq-bridge-claude
+!include style.iuml
+title Claude Code sessions: the socket bridge and the CLI write the same ledger
+
+actor "Claude Code session" as CC
+participant "Unix socket\n/tmp/cc-socks/<pid>.sock" as Sock
+participant "Bridge" as Bridge
+database "Ledger" as Ledger
+participant "Deliverer" as Deliver
+actor "OpenCode session (Ana)" as Ana
+participant "CLI\ncoordination" as CLI
+
+== bind (one owner process per machine) ==
+Bridge -> Sock : listen; chmod 600
+Bridge -> Bridge : publish ~/.claude/sessions/<pid>.json\n(name "opencode", peerToken)
+Bridge -> Ledger : append bridge.bound
+
+== Claude → OpenCode through SendMessage ==
+CC -> Sock : frame {type user, msg_id, from uds:…,\ncontent "to: Ana\nQUESTION …"}
+Sock -> Bridge : line
+Bridge -> Bridge : parse frame; unwrap envelope;\nsplit "to:" line (several names allowed)
+Bridge -> Ledger : message(msg_id) exists? (dedupe)
+Bridge -> Ledger : resolve "Ana" in scope\n(name, former name, session id)
+alt no name matches
+  Bridge -> Ledger : append message.sent to most recent session,\ntext prefixed with the unmatched names
+else
+  Bridge -> Ledger : append message.sent {transport claude} per target
+end
+Bridge -> Deliver : pull(target)
+Deliver -> Ana : steer: QUESTION from <claude name> (record id)
+Bridge -> Sock : receipt {peer_message_status delivered,\norig_msg_id} back to the sender's socket
+Bridge -> Ledger : append message.delivered
+
+== OpenCode → Claude ==
+Ana -> Deliver : (any tool that targets a Claude peer)
+Deliver -> Bridge : send(peer, text, fromName)
+Bridge -> Bridge : lookup peer token in ~/.claude/sessions\n(pid alive, procStart matches)
+Bridge -> Sock : [auth token], user frame
+Sock --> Bridge : close within 2 s → accepted,\nelse uncertain
+Bridge -> Ledger : append message.sent {status}
+CC -> Sock : receipt delivered
+Sock -> Bridge : control frame
+Bridge -> Ledger : append message.delivered
+
+== Claude → ledger through the CLI (structured, no "to:" parsing) ==
+CC -> CLI : coordination ask ~--to Ana ~--item W… "text"\n(run with Bash)
+CLI -> CLI : actor = Claude session from\n$CLAUDE_SESSION_ID / pid registry
+CLI -> Ledger : append message.sent {transport cli}
+CLI -> Sock : control frame agent_mail_ping → owner process pulls
+Bridge -> Deliver : pull(Ana)
+CLI --> CC : "record 7b2e…"
+CC -> CLI : coordination board ~--front G1\ncoordination record 7b2e…\ncoordination history ~--item W…
+CLI -> Ledger : query
+CLI --> CC : text
+@enduml

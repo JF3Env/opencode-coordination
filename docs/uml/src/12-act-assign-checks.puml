@@ -1,0 +1,50 @@
+@startuml 12-act-assign-checks
+!include style.iuml
+title coordination_assign: the checks before an assignment is recorded
+
+start
+:assign(item, engineer, fresh);
+if (caller role is coordinator?) then (no)
+  :refuse "requires the coordinator agent";
+  end
+endif
+if (item state is ready?) then (no)
+  :refuse "item is <state>; accept and refine it first";
+  end
+endif
+if (engineer is an OpenCode session with role engineer\nin the same scope?) then (no)
+  :refuse "ASSIGN goes only to an engineer in this scope";
+  end
+endif
+if (engineer already has an item in\nassigned / in_progress / in_review?) then (yes)
+  :refuse "one open pull request per engineer: <item>";
+  end
+endif
+if (a freeze is active, or a hold covers\nany of item.scopeFiles?) then (yes)
+  :refuse "held by <hold id> until <lift on>";
+  end
+endif
+:collisions = active items whose scopeFiles\nintersect item.scopeFiles;
+if (collisions is empty?) then (no)
+  :refuse "files overlap with <items>;\nsequence them or narrow the scope";
+  end
+endif
+if (item.outcome is upkeep and upkeep items\nexceed the profile's share of active engineers?) then (yes)
+  :warn "upkeep share exceeded" (recorded, not refused);
+endif
+if (item.kind needs Claude and engineer is OpenCode?) then (yes)
+  :warn "proposal asked for a Claude engineer: <why>";
+endif
+if (fresh?) then (yes)
+  :replace the engineer session (sequence 11);
+  if (replacement delivered?) then (no)
+    :refuse with the failure; nothing recorded on the item;
+    end
+  endif
+endif
+:append item.assigned {assignee, fresh};
+:render ASSIGN from the item fields;
+:enqueue to the engineer with needsAnswerBy = now + 1 block;
+:return "Assigned to <name>" with the record id;
+stop
+@enduml
