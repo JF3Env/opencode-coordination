@@ -156,6 +156,11 @@ export function project(db: Db, e: StoredEvent): void {
       saveMessage(db, message)
       return
     }
+    case "message.cancelled": {
+      const message = read<MessageDoc>(db, "messages", "id", p.id)
+      if (message) saveMessage(db, { ...message, cancelled: true }, null)
+      return
+    }
     case "clock.reminder": {
       const message = read<MessageDoc>(db, "messages", "id", p.id)
       if (!message) return

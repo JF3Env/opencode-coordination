@@ -30,6 +30,22 @@ partition "Agents" {
   :names of agents gone for 24 h return to the pool;
 }
 partition "Periodic jobs" {
+  if (GO HORSE enabled by /enable-go-horse?) then (yes)
+    :for each existing OpenCode PM idle for 15 minutes;
+    if (no unanswered GO HORSE question?) then (yes)
+      :post the next of 10 functional-status questions;
+      :append go_horse.prompted; deliver with resume=true;
+      :PM asks coordinator for actions and engineer allocation;
+      :PM asks coordinator with a work item;
+      :coordinator assigns safe work and obtains an engineer start,\nor performs a review or merge;
+      :PM closes wake-up only after coordinator answers\nand linked item activity satisfies the ledger check;
+    else (pending)
+      :retry the same record if delivery failed;
+      :after 15 more idle minutes, append go_horse.retried;\nwake PM again and notify coordinator;
+      :status, promises and blockers do not close the cycle;
+    endif
+    :/disable-go-horse appends go_horse.mode disabled\nand closes pending wake-up deadlines;
+  endif
   if (GitHub sync due (profile.github.syncMinutes)?) then (yes)
     :GitHubSync.sync() (activity 14);
   endif

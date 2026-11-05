@@ -106,6 +106,7 @@ export interface MessageDoc {
   at: string
   needsAnswerBy?: string
   answeredBy?: string
+  cancelled?: boolean
   reminded: number
   escalated: boolean
   delivered: boolean

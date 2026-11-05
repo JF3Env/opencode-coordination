@@ -229,7 +229,7 @@ export class Ledger {
     const marks = ids.map(() => "?").join(", ")
     return this.db.transaction(() => {
       const rows = this.db.all<{ doc: string; id: string }>(
-        `SELECT id, doc FROM messages WHERE to_id IN (${marks}) AND delivered = 0 AND (reserved_until IS NULL OR reserved_until < ?) ORDER BY at, id`,
+        `SELECT id, doc FROM messages WHERE to_id IN (${marks}) AND delivered = 0 AND json_extract(doc, '$.cancelled') IS NOT 1 AND (reserved_until IS NULL OR reserved_until < ?) ORDER BY at, id`,
         ...ids, now.toISOString(),
       )
       const until = new Date(now.getTime() + reserveMs).toISOString()
@@ -240,7 +240,7 @@ export class Ledger {
 
   pendingCount(mailboxes: string[]): number {
     const marks = mailboxes.map(() => "?").join(", ")
-    return (this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM messages WHERE to_id IN (${marks}) AND delivered = 0`, ...mailboxes) as { n: number }).n
+    return (this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM messages WHERE to_id IN (${marks}) AND delivered = 0 AND json_extract(doc, '$.cancelled') IS NOT 1`, ...mailboxes) as { n: number }).n
   }
 
   messagesBetween(fromId: string, toId: string, sinceIso: string): MessageDoc[] {
@@ -253,11 +253,11 @@ export class Ledger {
   }
 
   undeliveredCount(): number {
-    return (this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM messages WHERE delivered = 0") as { n: number }).n
+    return (this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM messages WHERE delivered = 0 AND json_extract(doc, '$.cancelled') IS NOT 1") as { n: number }).n
   }
 
   openQuestions(): MessageDoc[] {
-    return this.db.all<{ doc: string }>("SELECT doc FROM messages WHERE answered = 0 AND needs_answer_by IS NOT NULL ORDER BY needs_answer_by")
+    return this.db.all<{ doc: string }>("SELECT doc FROM messages WHERE answered = 0 AND needs_answer_by IS NOT NULL AND json_extract(doc, '$.cancelled') IS NOT 1 ORDER BY needs_answer_by")
       .map((row) => JSON.parse(row.doc) as MessageDoc)
   }
 

@@ -34,15 +34,17 @@ function labelOf(m: MessageDoc): string {
 export async function pull(rt: Runtime, sessionID: string): Promise<number> {
   if (!rt.host) return 0
   // Only an OpenCode session can be steered. A CLI or Claude Code identity reads its inbox itself.
-  const kind = rt.ledger.agent(sessionID)?.kind
-  if (kind && kind !== "opencode") return 0
+  const agent = rt.ledger.agent(sessionID)
+  if (!agent || agent.kind !== "opencode" || agent.role === "other") return 0
   const busy = pulling.get(rt) ?? new Set<string>()
   pulling.set(rt, busy)
   if (busy.has(sessionID)) return 0
   busy.add(sessionID)
   let delivered = 0
   try {
+    if (rt.host.canDeliver && !(await rt.host.canDeliver(sessionID))) return 0
     for (const message of rt.ledger.claimPending(mailboxes(rt, sessionID), rt.now())) {
+      if (rt.ledger.message(message.id)?.cancelled) continue
       try {
         await rt.host.deliver(sessionID, inboundText(message, message.item ? rt.ledger.item(message.item)?.title : undefined))
         rt.ledger.append({ type: "message.delivered", actor: SYSTEM_ACTOR, subject: message.item, payload: { id: message.id, sessionID } })

@@ -62,6 +62,53 @@ coordination board
 coordination render --check        # exit 1 when a generated page is stale
 ```
 
+### Wake an idle product manager
+
+Run `/enable-go-horse` in an OpenCode session to enable GO HORSE for that project.
+The mode stays enabled across plugin reloads and ledger rebuilds.
+Run `/disable-go-horse` to stop it and close pending wake-up deadlines without deleting their history.
+
+The existing minute clock checks for an OpenCode product manager (PM) session with 15 minutes of idle time.
+It sends one tracked question and resumes that session.
+The PM must ask the coordinator through `coordination_ask`, with an `item` that names the work to execute.
+The coordinator must answer that follow-up before the PM can close the automatic question.
+The ledger must also show an action on that same item after the wake-up:
+
+- A coordinator assignment or unblock, followed by an engineer claim, review request or result.
+- Or a coordinator review or merge on the item.
+
+The item must remain in an execution, review or completed state when the PM closes the cycle.
+Status messages and progress lines do not satisfy this check.
+Proposals, assignments without an engineer start, and blocker reports do not satisfy it either.
+Work on another item or before the wake-up does not count.
+These checks prove recorded workflow activity, not functional correctness or the quality of an agent's work.
+
+The ten questions rotate in this order:
+
+1. Qual fluxo funcional será exercitado agora? Acione o coordenador para iniciar a execução e registrar a evidência.
+2. Qual funcionalidade prioritária ainda não funciona? Faça o coordenador atribuir o próximo passo e obter o início do trabalho.
+3. Qual falha impede o fluxo principal? Mobilize um engenheiro para reproduzi-la e iniciar a correção autorizada.
+4. Qual avanço funcional pode ser produzido agora? Faça a equipe executar o próximo passo e registrar o resultado.
+5. Qual entrega precisa de teste funcional ou integração? Faça o coordenador atribuir a execução e cobrar seu início.
+6. Qual bloqueio será tratado agora? Acione o responsável e inicie trabalho independente autorizado; não encerre com apenas uma justificativa.
+7. Qual entrega pode sair da fila de revisão agora? Faça o coordenador realizar a revisão ou concluir a integração autorizada.
+8. Qual engenheiro está sem trabalho útil? Faça o coordenador atribuir uma tarefa executável e obter a confirmação de início.
+9. Como iniciar a próxima entrega em paralelo agora? Faça o coordenador dividir o escopo e acionar os engenheiros disponíveis.
+10. Qual resultado funcional verificável será produzido a seguir? Mobilize o responsável agora e registre o início da execução.
+
+A pending question prevents another independent question, but it does not stop the timer.
+After another 15 idle minutes, the plugin wakes the PM again and sends an action notice to the coordinator.
+The notice refers to the same open cycle. Retries share the ledger clock and do not accumulate each minute.
+Failed delivery retries the pending record on the next clock tick.
+Busy sessions receive no wake-up. New activity resets the idle window.
+The clock can send a question up to one minute after the idle threshold.
+The mode creates no agents and changes no models or permissions.
+It does not bypass holds, parked fronts, file overlap checks or owner approvals.
+Without useful authorized work, the PM must define a useful next item or seek the required approval.
+A blocker report does not close the cycle; the timer continues until an action satisfies the check or the owner disables the mode.
+The mode never authorizes invented work or removal of a safety hold just to satisfy its activity check.
+The OpenCode server must stay active; this timer cannot restart a stopped process or wake a CLI identity.
+
 ## Profile
 
 `.opencode/coordination.json` (all fields optional): role aliases, `cli` (the names a CLI or Claude Code identity may declare per role), `blockMinutes`, `fronts`, `github.repo` / `baseBranch` (default `main`) / `syncMinutes` / `agentLine`, extra prompt `rules`, `render` paths (and `auto`), `limits`, `freezeExempt`. Unknown keys are an error.

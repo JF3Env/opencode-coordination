@@ -5,6 +5,7 @@ import { blockMs, partyOf, post, postToRole, type Runtime } from "../runtime.ts"
 import { dispatch } from "../deliver/deliver.ts"
 import { computeState, stateText } from "../views/state.ts"
 import { freeEngineers } from "../views/board.ts"
+import { tickGoHorse } from "./go-horse.ts"
 
 export interface TickResult {
   reminded: string[]
@@ -37,6 +38,8 @@ export async function tick(rt: Runtime): Promise<TickResult> {
 
   // Unanswered messages: one block → resend; two blocks → escalate.
   for (const m of rt.ledger.openQuestions()) {
+    // GO HORSE follows its own idle window, including repeated wake-ups while the question stays open.
+    if (m.from.id === "go-horse") continue
     const due = Date.parse(m.needsAnswerBy as string)
     if (now < due) continue
     if (m.reminded === 0) {
@@ -112,6 +115,7 @@ export async function tick(rt: Runtime): Promise<TickResult> {
     rt.ledger.setMeta("last_digest", new Date(now).toISOString())
     if (rt.ledger.agents((a) => a.role === "product-manager" && a.status !== "gone").length) await toRole(rt, "product-manager", text)
   }
+  await tickGoHorse(rt)
   return out
 }
 
