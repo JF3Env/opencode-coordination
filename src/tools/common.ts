@@ -6,13 +6,14 @@ import { SYSTEM_ACTOR } from "../domain/system.ts"
 import { actorParty, answerOpen, fail, mailboxes, markAnswered, partyOf, post, postToRole, resolveTarget, type Runtime } from "../runtime.ts"
 import { tool, type ToolSpec } from "./define.ts"
 import { needItem, oneLine } from "./helpers.ts"
+import { checkGoHorseAnswer } from "../clock/go-horse.ts"
 
 const text8000 = z.string().trim().min(1).max(8000)
 
 function fmtMessage(m: MessageDoc): string {
   return [
     `record ${m.short} (full id ${m.id})`,
-    `at ${m.at}; ${m.delivered ? "delivered" : "not yet delivered"}${m.answeredBy ? "; answered" : m.needsAnswerBy ? `; answer due ${m.needsAnswerBy}${m.escalated ? " (escalated)" : m.reminded ? " (reminded)" : ""}` : ""}`,
+    `at ${m.at}; ${m.delivered ? "delivered" : "not yet delivered"}${m.cancelled ? "; cancelled" : m.answeredBy ? "; answered" : m.needsAnswerBy ? `; answer due ${m.needsAnswerBy}${m.escalated ? " (escalated)" : m.reminded ? " (reminded)" : ""}` : ""}`,
     `from ${m.from.name} (${m.from.kind}:${m.from.id})`,
     `to ${m.to.name} (${m.to.kind}:${m.to.id})`,
     m.item ? `item ${m.item}` : "",
@@ -115,19 +116,27 @@ export const ask = tool({
 export const answer = tool({
   name: "answer",
   roles: "any",
-  description: "Answer a question that was sent to you, by its record id (8 characters work). Closes its deadline.",
+  description: "Answer a question that was sent to you, by its record id (8 characters work). Closes its deadline. A GO HORSE cycle requires a coordinator reply and recorded work on the item named in the follow-up question; status messages do not close it.",
   input: z.object({ message: z.string().trim().min(1), text: text8000 }).strict(),
   async run({ rt, actor }, i) {
     const found = rt.ledger.resolveMessage(i.message)
     if (!("found" in found)) fail("ambiguous" in found ? `${found.ambiguous.length} records begin with ${i.message}. Give more of the id.` : `No stored record has the id ${i.message}.`)
     const m = found.found
     if (!mailboxes(rt, actor.session).includes(m.to.id)) fail(`Record ${m.short} was not addressed to you.`)
+    if (m.cancelled) fail(`Record ${m.short} is cancelled.`)
     if (m.answeredBy) fail(`Record ${m.short} is already answered.`)
+    const original = m.inReplyTo ? rt.ledger.message(m.inReplyTo) : undefined
+    checkGoHorseAnswer(rt, original ?? m)
     const reply = post(rt, { from: actorParty(actor), to: m.from, kind: "answer", text: i.text, item: m.item, inReplyTo: m.id, free: true, actor })
     // Answering a resent copy answers the question it repeats, so the clock stops following the original.
-    const original = m.inReplyTo ? rt.ledger.message(m.inReplyTo) : undefined
     const closes = original && !original.answeredBy && original.needsAnswerBy && mailboxes(rt, actor.session).includes(original.to.id) ? [m.id, original.id] : [m.id]
     markAnswered(rt, closes, actor)
+    const root = original ?? m
+    if (root.from.id === "go-horse" && closes.includes(root.id)) {
+      for (const copy of rt.ledger.messages({ fromId: "go-horse" }).filter((copy) => copy.inReplyTo === root.id && !copy.answeredBy && !copy.cancelled)) {
+        rt.ledger.append({ type: "message.cancelled", actor, payload: { id: copy.id, reason: "GO HORSE cycle completed" } })
+      }
+    }
     await dispatch(rt, reply)
     return `Answered ${m.short} (${m.from.name}); your answer is record ${reply.short}.`
   },

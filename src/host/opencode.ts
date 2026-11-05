@@ -3,6 +3,7 @@ import { promisify } from "node:util"
 import { z } from "zod"
 import { bindBridge, type Bridge } from "../bridge/bridge.ts"
 import { tick } from "../clock/clock.ts"
+import { setGoHorse } from "../clock/go-horse.ts"
 import { loadProfile } from "../config/profile.ts"
 import { pull } from "../deliver/deliver.ts"
 import { roleOf, roleSessionTitle, type TitleModel } from "../domain/roles.ts"
@@ -10,7 +11,8 @@ import type { Actor } from "../domain/types.ts"
 import { Ledger } from "../ledger/ledger.ts"
 import { buildPrompt } from "../prompt/prompt.ts"
 import { renderPages, writePages } from "../render/render.ts"
-import { registerSession, type HostControl, type Runtime } from "../runtime.ts"
+import { actorFor, partyOf, post, registerSession, type HostControl, type Runtime } from "../runtime.ts"
+import { dispatch } from "../deliver/deliver.ts"
 import { ledgerPathFor, scopeOf } from "../scope.ts"
 import { makeGitHub, syncPullRequests, type Gh } from "../github/sync.ts"
 import { ALL_TOOLS, callTool } from "../tools/index.ts"
@@ -44,6 +46,7 @@ interface HostContext {
   event: { subscribe(options: { signal: AbortSignal }): AsyncIterable<{ type: string; data?: any; location?: { directory?: string } }> }
   agent: { transform(fn: (editor: any) => void): Promise<{ dispose(): Promise<void> | void }> }
   tool: { transform(fn: (editor: any) => void): Promise<unknown> }
+  command: { transform(fn: (editor: { add(definition: { name: string; description: string; execute(input: { sessionID: string }): Promise<void> }): void }) => void): Promise<unknown> }
   plugin: { list(filter: unknown, options: { signal: AbortSignal }): Promise<{ data: Array<{ id: string; state: { status: string } }> }> }
 }
 
@@ -79,7 +82,14 @@ export function createPlugin(options: PluginOptions = {}) {
       const ledger = await Ledger.open(ledgerPathFor(scope), scope)
       const sessions = ctx.session
 
+      const canDeliver = async (sessionID: string): Promise<boolean> => {
+        const info = sessionView(await sessions.get({ sessionID }).catch(() => undefined))
+        const directory = info.location?.directory || ctx.location.directory
+        return !info.parentID && roleOf(info.agent, profile.roles) !== "other"
+          && (directory === ctx.location.directory || (await scopeOf(directory)) === scope)
+      }
       const host: HostControl = {
+        canDeliver,
         async deliver(sessionID, text) {
           await sessions.synthetic({ sessionID, text, delivery: "steer", resume: true })
         },
@@ -87,8 +97,9 @@ export function createPlugin(options: PluginOptions = {}) {
           const live = new Set<string>()
           for (const id of candidates) {
             try {
-              await sessions.get({ sessionID: id })
-              live.add(id)
+              const info = sessionView(await sessions.get({ sessionID: id }))
+              const directory = info.location?.directory || ctx.location.directory
+              if (directory === ctx.location.directory || (await scopeOf(directory)) === scope) live.add(id)
             } catch {
               // not found: the session is gone
             }
@@ -120,6 +131,26 @@ export function createPlugin(options: PluginOptions = {}) {
 
       const rt: Runtime = { ledger, profile, now: () => ledger.now(), host }
       rt.wake = (sessionID) => void pull(rt, sessionID)
+      await ctx.command.transform((editor) => {
+        for (const enabled of [true, false]) editor.add({
+          name: enabled ? "enable-go-horse" : "disable-go-horse",
+          description: enabled ? "Require recorded work after 15 idle minutes; wake the PM and coordinator until work starts" : "Stop automatic GO HORSE questions",
+          async execute({ sessionID }) {
+            const info = sessionView(await sessions.get({ sessionID }))
+            const directory = info.location?.directory || ctx.location.directory
+            if ((await scopeOf(directory)) !== scope) throw new ToolFailure("This session belongs to another project.")
+            const me = registerSession(rt, { sessionID, agent: info.agent || "", directory, model: info.model, parent: info.parentID })
+            const actor = actorFor(rt, sessionID)
+            setGoHorse(rt, actor, enabled)
+            await dispatch(rt, post(rt, {
+              from: { kind: "system", id: "system", name: "coordination" }, to: partyOf(me), kind: "note", actor,
+              text: enabled
+                ? "GO HORSE enabled for this project. After 15 idle minutes, an existing PM session receives an action question. Consult the coordinator with an item. Closing the cycle requires recorded work, not status messages. Unfinished cycles wake the PM and coordinator again after 15 idle minutes. No agent permissions change. Use /disable-go-horse to stop."
+                : "GO HORSE disabled for this project. Pending GO HORSE deadlines are closed. The ledger keeps their history.",
+            }))
+          },
+        })
+      })
       const github = profile.github.repo ? makeGitHub(profile.github.repo, ghRunner, profile.github.baseBranch) : undefined
       if (github) rt.github = github
 
@@ -145,8 +176,8 @@ export function createPlugin(options: PluginOptions = {}) {
 
       // ---- sessions: registration, title, prompt -------------------------------------------------------------------
       const titleJobs = new Map<string, Promise<void>>()
-      const refresh = async (sessionID: string, agent: string, directory: string, model?: TitleModel, parent?: string): Promise<ReturnType<typeof registerSession>> => {
-        const me = registerSession(rt, { sessionID, agent, directory, model, parent })
+      const refresh = async (sessionID: string, agent: string, directory: string, model?: TitleModel, parent?: string, status: "busy" | "idle" = "busy"): Promise<ReturnType<typeof registerSession>> => {
+        const me = registerSession(rt, { sessionID, agent, directory, model, parent, status })
         const wanted = roleSessionTitle(me.role, me.name, model)
         if (wanted) {
           try {
@@ -163,7 +194,7 @@ export function createPlugin(options: PluginOptions = {}) {
         const job = (async () => {
           try {
             const info = sessionView(await sessions.get({ sessionID }))
-            if (info.agent && !info.parentID && roleOf(info.agent, profile.roles) !== "other") await refresh(sessionID, info.agent, info.location?.directory || ctx.location.directory, info.model, info.parentID)
+            if (info.agent && !info.parentID && roleOf(info.agent, profile.roles) !== "other") await refresh(sessionID, info.agent, info.location?.directory || ctx.location.directory, info.model, info.parentID, rt.ledger.agent(sessionID)?.status === "idle" ? "idle" : "busy")
           } catch {
             // a missing session is not a coordination failure
           }
@@ -173,10 +204,12 @@ export function createPlugin(options: PluginOptions = {}) {
 
       const active = new Set<string>()
       await sessions.hook("context", async (event) => {
-        active.add(event.sessionID)
+        active.delete(event.sessionID)
         const info = sessionView(await sessions.get({ sessionID: event.sessionID }).catch(() => undefined))
+        if (info.parentID || roleOf(event.agent, profile.roles) === "other") return
         const directory = info.location?.directory || ctx.location.directory
         if ((await scopeOf(directory)) !== scope) return
+        active.add(event.sessionID)
         await refresh(event.sessionID, event.agent, directory, event.model, info.parentID)
         const text = buildPrompt(rt, event.sessionID, event.model)
         if (text) event.system.push({ type: "text", text })
@@ -185,6 +218,7 @@ export function createPlugin(options: PluginOptions = {}) {
       await sessions.hook("title", async (event) => {
         const agent = rt.ledger.agent(event.sessionID)
         if (!agent || agent.role === "other") return
+        if (!(await canDeliver(event.sessionID))) return
         const title = roleSessionTitle(agent.role, agent.name, event.model)
         if (title) event.result = title
       })
@@ -244,6 +278,8 @@ export function createPlugin(options: PluginOptions = {}) {
           }
           if (event.type === "session.idle" && sessionID) {
             active.delete(sessionID)
+            const known = rt.ledger.agent(sessionID)
+            if (known && known.status !== "idle") rt.ledger.append({ type: "agent.status", actor: { session: sessionID, name: known.name, role: known.role }, payload: { sessionID, status: "idle" } })
             void pull(rt, sessionID)
             continue
           }
@@ -262,7 +298,10 @@ export function createPlugin(options: PluginOptions = {}) {
       const poll = setInterval(() => {
         for (const id of active) void pull(rt, id)
       }, 1000)
+      let clockRunning = false
       const clock = setInterval(() => {
+        if (clockRunning) return
+        clockRunning = true
         void (async () => {
           try {
             await tick(rt)
@@ -274,6 +313,8 @@ export function createPlugin(options: PluginOptions = {}) {
             if (profile.render.auto) writePages(ctx.location.directory, renderPages(rt.ledger, profile))
           } catch (error) {
             console.error("coordination: clock tick failed", error instanceof Error ? error.message : error)
+          } finally {
+            clockRunning = false
           }
         })()
       }, 60_000)

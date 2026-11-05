@@ -6,6 +6,7 @@ import test from "node:test"
 import { importAgentMail } from "../src/ledger/import.ts"
 import { Ledger } from "../src/ledger/ledger.ts"
 import { buildPrompt } from "../src/prompt/prompt.ts"
+import { registerSession } from "../src/runtime.ts"
 import { renderPages, stalePages, writePages } from "../src/render/render.ts"
 import { codesIn } from "../src/tools/pm.ts"
 import { itemIdFrom, names, team } from "./helpers.ts"
@@ -66,6 +67,15 @@ test("the role prompt carries the item, the waiting questions and the tools of t
   assert.match(buildPrompt(fx.rt, "ses_co"), /coordination_assign/)
   assert.match(buildPrompt(fx.rt, "ses_pm"), /coordination_propose/)
   assert.ok(prompt.split("\n").length < 30)
+})
+
+test("unknown sessions, ordinary agents and subagents receive no role prompt", async () => {
+  const fx = await team()
+  assert.equal(buildPrompt(fx.rt, "unknown"), "")
+  fx.register("helper", "build")
+  assert.equal(buildPrompt(fx.rt, "helper"), "")
+  registerSession(fx.rt, { sessionID: "child", agent: "coordinator", parent: "ses_co", directory: "/repo" })
+  assert.equal(buildPrompt(fx.rt, "child"), "")
 })
 
 test("legacy agent-mail records import once, with their ids and times, and are never redelivered", async () => {

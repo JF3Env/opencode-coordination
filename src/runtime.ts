@@ -9,6 +9,8 @@ import { SYSTEM_ACTOR } from "./domain/system.ts"
 export interface HostControl {
   /** Delivers text into a session as a steering message. */
   deliver(sessionID: string, text: string): Promise<void>
+  /** Checks whether the current session accepts automatic coordination messages. Absent: use the ledger role. */
+  canDeliver?(sessionID: string): Promise<boolean>
   /** Replaces an engineer session with an empty one that keeps name, role, model and directory; the caller then delivers the assignment. Absent on hosts that cannot. */
   replaceSession?(input: { sessionID: string; name: string; agent: string; directory: string }): Promise<{ sessionID: string; removed: boolean }>
   /** Which of these sessions the host still knows, for gone detection. Absent: gone detection is skipped. */

@@ -27,6 +27,17 @@ delivered --> closed : needsAnswerBy is null\n(note, broadcast, rendered digest)
 answered --> [*]
 closed --> [*]
 failed --> [*]
+queued --> cancelled : /disable-go-horse\n(event message.cancelled)
+delivered --> cancelled : /disable-go-horse\n(event message.cancelled)
+reminded --> cancelled
+escalated --> cancelled
+cancelled --> [*]
+
+note right of cancelled
+  The ledger keeps the record.
+  Cancellation stops delivery and deadlines.
+  It does not claim delivery or an answer.
+end note
 
 note right of waiting
   Escalation targets by sender role:
